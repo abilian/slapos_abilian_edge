@@ -1,15 +1,5 @@
-slapos.cookbook
-===============
+SlapOS with Abilian SBE
+=======================
 
-Cookbook of SlapOS recipes.
-
-
-testing
-=======
-
-Unit tests for recipes can be found under ``slapos/test/recipe``. To run the
-tests use provided unittest.defaultTestLoader inside ``slapos/test/test_recipe``
-by invoking 
-
-    python setup.py test --test-suite slapos.test.test_recipe.additional_tests
+Fork of [SlapOS](http://www.slapos.org/) with the code to deploy [Abilian SBE](https://github.com/abilian/abilian-sbe-monorepo/).
 
