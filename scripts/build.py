@@ -62,10 +62,15 @@ def list_available(base_dir: Path) -> list[str]:
     return items
 
 
-def create_standalone_buildout_cfg(cfg_path: Path, output_dir: Path) -> Path:
+def create_standalone_buildout_cfg(cfg_path: Path, output_dir: Path, use_cache: bool = False) -> Path:
     """
     Create a standalone buildout.cfg that wraps the target config
     with settings suitable for standalone building.
+
+    Args:
+        cfg_path: Path to the component/software buildout.cfg
+        output_dir: Build output directory
+        use_cache: Whether to enable network cache (shacache)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +98,27 @@ def create_standalone_buildout_cfg(cfg_path: Path, output_dir: Path) -> Path:
                 except OSError:
                     pass
 
+    # Build extensions list
+    extensions = ""
+    if use_cache:
+        extensions = """
+# Enable SlapOS extensions for network cache
+extensions =
+  slapos.extension.shared
+"""
+
+    # Build network cache section
+    cache_config = ""
+    if use_cache:
+        cache_config = """
+# Network cache configuration (shacache)
+networkcache-section = networkcache
+
+[networkcache]
+download-cache-url = http://shacache.nxdcdn.com
+download-dir-url = http://shadir.nxdcdn.com
+"""
+
     content = f"""\
 [buildout]
 extends = {rel_cfg_path}
@@ -105,17 +131,10 @@ bin-directory = ${{buildout:directory}}/bin
 
 # Shared parts directory for slapos.recipe.cmmi (used by shared=true)
 shared-parts = {shared_parts_dir}
-
-# Disable SlapOS extensions that require infrastructure
-extensions =
-
+{extensions}
 # Allow picking versions if not pinned (for flexibility)
 allow-picked-versions = true
-
-# Disable network cache (build from source)
-# To enable, uncomment and configure:
-# networkcache-section = networkcache
-
+{cache_config}
 # Use standard PyPI
 index = https://pypi.org/simple/
 
@@ -127,8 +146,19 @@ verbosity = 1
     return standalone_cfg
 
 
-def run_buildout(cfg_path: Path, output_dir: Path) -> int:
-    """Run buildout with the given configuration."""
+def run_buildout(cfg_path: Path, output_dir: Path, use_cache: bool = False) -> tuple[int, dict]:
+    """
+    Run buildout with the given configuration.
+
+    Args:
+        cfg_path: Path to the component/software buildout.cfg
+        output_dir: Build output directory
+        use_cache: Whether to enable network cache
+
+    Returns:
+        Tuple of (return_code, cache_stats)
+        cache_stats is a dict with keys: hits, misses, downloads
+    """
     # Ensure buildout and common recipes are available
     required_packages = [
         "zc.buildout",
@@ -138,6 +168,9 @@ def run_buildout(cfg_path: Path, output_dir: Path) -> int:
         "plone.recipe.command",
         "collective.recipe.template",
     ]
+
+    if use_cache:
+        required_packages.append("slapos.libnetworkcache")
 
     print("Ensuring required packages are installed...")
     for pkg in required_packages:
@@ -155,9 +188,10 @@ def run_buildout(cfg_path: Path, output_dir: Path) -> int:
             )
 
     # Create standalone config
-    standalone_cfg = create_standalone_buildout_cfg(cfg_path, output_dir)
+    standalone_cfg = create_standalone_buildout_cfg(cfg_path, output_dir, use_cache)
 
-    print(f"Building with config: {cfg_path}")
+    cache_status = " (cache ENABLED)" if use_cache else " (cache disabled)"
+    print(f"Building with config: {cfg_path}{cache_status}")
     print(f"Output directory: {output_dir}")
     print(f"Standalone config: {standalone_cfg}")
     print("-" * 60)
@@ -186,15 +220,60 @@ def run_buildout(cfg_path: Path, output_dir: Path) -> int:
                 buildout_bin = Path(buildout_cmd)
             else:
                 print("Error: Could not find buildout command")
-                return 1
+                return 1, {}
 
-    result = subprocess.run(
-        [str(buildout_bin), "-c", str(standalone_cfg)],
-        cwd=str(output_dir),
-        env=env,
-    )
+    # Run buildout and capture output for cache analysis
+    cache_stats = {"hits": 0, "misses": 0, "downloads": 0}
 
-    return result.returncode
+    if use_cache:
+        # Capture output to analyze cache behavior
+        process = subprocess.Popen(
+            [str(buildout_bin), "-c", str(standalone_cfg)],
+            cwd=str(output_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        # Stream output and detect cache hits/misses
+        for line in process.stdout:
+            print(line, end="")
+            line_lower = line.lower()
+
+            # Detect cache hits
+            if "from network cache" in line_lower or "cache hit" in line_lower:
+                cache_stats["hits"] += 1
+
+            # Detect cache misses (downloading from source)
+            elif "downloading" in line_lower and ("http://" in line or "https://" in line):
+                cache_stats["misses"] += 1
+                cache_stats["downloads"] += 1
+
+        return_code = process.wait()
+    else:
+        # No cache - just run normally
+        result = subprocess.run(
+            [str(buildout_bin), "-c", str(standalone_cfg)],
+            cwd=str(output_dir),
+            env=env,
+        )
+        return_code = result.returncode
+
+    # Print cache statistics
+    if use_cache:
+        print("\n" + "=" * 60)
+        print("CACHE STATISTICS:")
+        print(f"  Cache hits:     {cache_stats['hits']}")
+        print(f"  Cache misses:   {cache_stats['misses']}")
+        print(f"  Downloads:      {cache_stats['downloads']}")
+        if cache_stats['hits'] + cache_stats['misses'] > 0:
+            hit_rate = 100 * cache_stats['hits'] / (cache_stats['hits'] + cache_stats['misses'])
+            print(f"  Hit rate:       {hit_rate:.1f}%")
+        print("=" * 60)
+
+    return return_code, cache_stats
 
 
 def cmd_build_component(args):
@@ -206,7 +285,9 @@ def cmd_build_component(args):
         return 1
 
     output_dir = BUILD_DIR / "components" / args.name
-    return run_buildout(cfg_path, output_dir)
+    use_cache = getattr(args, 'use_cache', False) or os.environ.get('SLAPOS_CACHE', '').lower() in ('1', 'true', 'yes')
+    return_code, cache_stats = run_buildout(cfg_path, output_dir, use_cache)
+    return return_code
 
 
 def cmd_build_software(args):
@@ -218,7 +299,9 @@ def cmd_build_software(args):
         return 1
 
     output_dir = BUILD_DIR / "software" / args.name
-    return run_buildout(cfg_path, output_dir)
+    use_cache = getattr(args, 'use_cache', False) or os.environ.get('SLAPOS_CACHE', '').lower() in ('1', 'true', 'yes')
+    return_code, cache_stats = run_buildout(cfg_path, output_dir, use_cache)
+    return return_code
 
 
 def cmd_list(args):
@@ -249,11 +332,21 @@ def main():
     # component command
     comp_parser = subparsers.add_parser("component", help="Build a component")
     comp_parser.add_argument("name", help="Component name (e.g., redis, postgresql)")
+    comp_parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Enable network cache (shacache) for faster builds. Can also set SLAPOS_CACHE=1 env var.",
+    )
     comp_parser.set_defaults(func=cmd_build_component)
 
     # software command
     soft_parser = subparsers.add_parser("software", help="Build a software release")
     soft_parser.add_argument("name", help="Software name (e.g., abilian-sbe, gitlab)")
+    soft_parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Enable network cache (shacache) for faster builds. Can also set SLAPOS_CACHE=1 env var.",
+    )
     soft_parser.set_defaults(func=cmd_build_software)
 
     # list command
