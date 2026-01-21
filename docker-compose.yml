@@ -1,0 +1,55 @@
+services:
+  slapos-build:
+    build: .
+    volumes:
+      # Mount source for development
+      - .:/slapos
+      # Persist build artifacts (use named volume to avoid macOS bind mount issues)
+      - slapos-build:/slapos/build
+      # Cache eggs between builds
+      - slapos-eggs:/slapos/.eggs
+    working_dir: /slapos
+    command: ["python", "scripts/build.py", "--help"]
+
+  # Build a specific component
+  build-component:
+    build: .
+    volumes:
+      - .:/slapos
+      - slapos-build:/slapos/build
+      - slapos-eggs:/slapos/.eggs
+    working_dir: /slapos
+    # Override with: docker compose run build-component component xz-utils
+    entrypoint: ["python", "scripts/build.py"]
+
+  # Build a software release
+  build-software:
+    build: .
+    volumes:
+      - .:/slapos
+      - slapos-build:/slapos/build
+      - slapos-eggs:/slapos/.eggs
+    working_dir: /slapos
+    # Override with: docker compose run build-software software abilian-sbe
+    entrypoint: ["python", "scripts/build.py"]
+
+  # Build all components or software releases with reporting
+  build-all:
+    build: .
+    volumes:
+      - .:/slapos
+      - slapos-build:/slapos/build
+      - slapos-eggs:/slapos/.eggs
+    working_dir: /slapos
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Usage:
+    #   docker compose run --rm build-all components
+    #   docker compose run --rm build-all software
+    #   docker compose run --rm build-all all
+    #   docker compose run --rm build-all components --timeout 600
+    entrypoint: ["python", "scripts/build_all.py"]
+
+volumes:
+  slapos-build:
+  slapos-eggs:
