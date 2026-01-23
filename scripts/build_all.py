@@ -63,12 +63,20 @@ def ensure_dirs():
 
 
 def build_item(
-    item_type: str, name: str, timeout: int, log_dir: Path
+    item_type: str, name: str, timeout: int, log_dir: Path, use_cache: bool = False
 ) -> dict:
     """
     Build a single component or software release.
 
-    Returns a dict with build results.
+    Args:
+        item_type: "component" or "software"
+        name: Name of the item to build
+        timeout: Timeout in seconds
+        log_dir: Directory to write logs
+        use_cache: Whether to enable network cache
+
+    Returns:
+        dict with build results including cache statistics
     """
     log_file = log_dir / f"{name}.log"
 
@@ -82,6 +90,8 @@ def build_item(
         "duration_seconds": None,
         "log_file": str(log_file),
         "error_summary": None,
+        "cache_hits": 0,
+        "cache_misses": 0,
     }
 
     cmd = [
@@ -91,7 +101,14 @@ def build_item(
         name,
     ]
 
+    if use_cache:
+        cmd.append("--use-cache")
+
     print(f"  Building {name}...", end=" ", flush=True)
+
+    # Flag to enable/disable real-time output (set via environment variable)
+    import os
+    show_output = os.environ.get('SLAPOS_SHOW_OUTPUT', '').lower() in ('1', 'true', 'yes')
 
     try:
         with open(log_file, "w") as log:
@@ -101,16 +118,38 @@ def build_item(
             log.write("=" * 60 + "\n\n")
             log.flush()
 
-            proc = subprocess.run(
-                cmd,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=timeout,
-                cwd=str(ROOT),
-            )
+            if show_output:
+                # Stream output to both console and log file
+                print(f"\n--- Build output for {name} ---")
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    cwd=str(ROOT),
+                )
 
-            result["return_code"] = proc.returncode
-            result["success"] = proc.returncode == 0
+                # Stream output line by line
+                for line in proc.stdout:
+                    log.write(line)
+                    log.flush()
+                    # Print with component prefix
+                    print(f"[{name}] {line}", end='')
+
+                result["return_code"] = proc.wait(timeout=timeout)
+            else:
+                # Original behavior: output only to log file
+                proc = subprocess.run(
+                    cmd,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    timeout=timeout,
+                    cwd=str(ROOT),
+                )
+                result["return_code"] = proc.returncode
+
+            result["success"] = result["return_code"] == 0
 
     except subprocess.TimeoutExpired:
         result["return_code"] = -1
@@ -133,6 +172,12 @@ def build_item(
     if not result["success"] and not result["error_summary"]:
         result["error_summary"] = extract_error_summary(log_file)
 
+    # Extract cache statistics from log if cache was enabled
+    if use_cache:
+        cache_stats = extract_cache_stats(log_file)
+        result["cache_hits"] = cache_stats.get("hits", 0)
+        result["cache_misses"] = cache_stats.get("misses", 0)
+
     # Append end marker to log
     with open(log_file, "a") as log:
         log.write(f"\n\n{'=' * 60}\n")
@@ -143,7 +188,10 @@ def build_item(
 
     # Print result
     if result["success"]:
-        print(f"OK ({duration:.1f}s)")
+        cache_info = ""
+        if use_cache and (result["cache_hits"] + result["cache_misses"]) > 0:
+            cache_info = f" [cache: {result['cache_hits']}hit/{result['cache_misses']}miss]"
+        print(f"OK ({duration:.1f}s){cache_info}")
     else:
         print(f"FAILED ({duration:.1f}s)")
         if result["error_summary"]:
@@ -152,6 +200,32 @@ def build_item(
             print(f"    Error: {first_line}...")
 
     return result
+
+
+def extract_cache_stats(log_file: Path) -> dict:
+    """Extract cache statistics from build log."""
+    stats = {"hits": 0, "misses": 0}
+    try:
+        with open(log_file, "r") as f:
+            for line in f:
+                if "Cache hits:" in line:
+                    # Parse "Cache hits:     5"
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        try:
+                            stats["hits"] = int(parts[1].strip())
+                        except ValueError:
+                            pass
+                elif "Cache misses:" in line:
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        try:
+                            stats["misses"] = int(parts[1].strip())
+                        except ValueError:
+                            pass
+    except Exception:
+        pass
+    return stats
 
 
 def extract_error_summary(log_file: Path, max_lines: int = 10) -> Optional[str]:
@@ -273,6 +347,7 @@ def build_all(
     items: list[str],
     timeout: int,
     resume_from: Optional[str] = None,
+    use_cache: bool = False,
 ) -> list[dict]:
     """Build all items of a given type."""
     ensure_dirs()
@@ -281,8 +356,9 @@ def build_all(
     log_dir = LOGS_DIR / f"{item_type}_{timestamp}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    cache_status = " (cache ENABLED)" if use_cache else " (cache disabled)"
     print(f"\n{'=' * 60}")
-    print(f"Building all {item_type} ({len(items)} total)")
+    print(f"Building all {item_type} ({len(items)} total){cache_status}")
     print(f"Logs: {log_dir}")
     print(f"Timeout: {timeout} seconds per item")
     print(f"{'=' * 60}\n")
@@ -300,7 +376,7 @@ def build_all(
                 continue
 
         print(f"[{i}/{len(items)}] ", end="")
-        result = build_item(item_type, name, timeout, log_dir)
+        result = build_item(item_type, name, timeout, log_dir, use_cache)
         results.append(result)
 
     # Generate report
@@ -347,8 +423,16 @@ def main():
         type=str,
         help="Only build items matching this pattern (comma-separated)",
     )
+    parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Enable network cache (shacache) for faster builds. Can also set SLAPOS_CACHE=1 env var.",
+    )
 
     args = parser.parse_args()
+
+    # Check for cache flag from either argument or environment variable
+    use_cache = args.use_cache or os.environ.get('SLAPOS_CACHE', '').lower() in ('1', 'true', 'yes')
 
     all_results = []
 
@@ -357,7 +441,7 @@ def main():
         if args.only:
             patterns = [p.strip() for p in args.only.split(",")]
             items = [i for i in items if any(p in i for p in patterns)]
-        results = build_all("component", items, args.timeout, args.resume_from)
+        results = build_all("component", items, args.timeout, args.resume_from, use_cache)
         all_results.extend(results)
 
     if args.target in ("software", "all"):
@@ -365,7 +449,7 @@ def main():
         if args.only:
             patterns = [p.strip() for p in args.only.split(",")]
             items = [i for i in items if any(p in i for p in patterns)]
-        results = build_all("software", items, args.timeout, args.resume_from)
+        results = build_all("software", items, args.timeout, args.resume_from, use_cache)
         all_results.extend(results)
 
     # Exit with error if any builds failed

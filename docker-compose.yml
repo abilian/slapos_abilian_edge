@@ -4,11 +4,17 @@ services:
     volumes:
       # Mount source for development
       - .:/slapos
-      # Persist build artifacts (use named volume to avoid macOS bind mount issues)
-      - slapos-build:/slapos/build
+      # IMPORTANT: Bind mount build directory to host for log access
+      # Logs will be available at ./build/ on the host machine
+      - ./build:/slapos/build
       # Cache eggs between builds
       - slapos-eggs:/slapos/.eggs
     working_dir: /slapos
+    environment:
+      # Set SLAPOS_CACHE=1 to enable network cache (shacache)
+      - SLAPOS_CACHE=${SLAPOS_CACHE:-0}
+      # Allow configure scripts to run as root (required in Docker)
+      - FORCE_UNSAFE_CONFIGURE=1
     command: ["python", "scripts/build.py", "--help"]
 
   # Build a specific component
@@ -16,10 +22,17 @@ services:
     build: .
     volumes:
       - .:/slapos
-      - slapos-build:/slapos/build
+      - ./build:/slapos/build
       - slapos-eggs:/slapos/.eggs
     working_dir: /slapos
-    # Override with: docker compose run build-component component xz-utils
+    environment:
+      # Set SLAPOS_CACHE=1 to enable network cache (shacache)
+      - SLAPOS_CACHE=${SLAPOS_CACHE:-0}
+      # Allow configure scripts to run as root (required in Docker)
+      - FORCE_UNSAFE_CONFIGURE=1
+    # Usage:
+    #   docker compose run --rm build-component component redis
+    #   SLAPOS_CACHE=1 docker compose run --rm build-component component redis
     entrypoint: ["python", "scripts/build.py"]
 
   # Build a software release
@@ -27,10 +40,17 @@ services:
     build: .
     volumes:
       - .:/slapos
-      - slapos-build:/slapos/build
+      - ./build:/slapos/build
       - slapos-eggs:/slapos/.eggs
     working_dir: /slapos
-    # Override with: docker compose run build-software software abilian-sbe
+    environment:
+      # Set SLAPOS_CACHE=1 to enable network cache (shacache)
+      - SLAPOS_CACHE=${SLAPOS_CACHE:-0}
+      # Allow configure scripts to run as root (required in Docker)
+      - FORCE_UNSAFE_CONFIGURE=1
+    # Usage:
+    #   docker compose run --rm build-software software abilian-sbe
+    #   SLAPOS_CACHE=1 docker compose run --rm build-software software abilian-sbe
     entrypoint: ["python", "scripts/build.py"]
 
   # Build all components or software releases with reporting
@@ -38,18 +58,41 @@ services:
     build: .
     volumes:
       - .:/slapos
-      - slapos-build:/slapos/build
+      - ./build:/slapos/build
       - slapos-eggs:/slapos/.eggs
     working_dir: /slapos
     environment:
       - PYTHONUNBUFFERED=1
+      # Set SLAPOS_CACHE=1 to enable network cache (shacache)
+      - SLAPOS_CACHE=${SLAPOS_CACHE:-0}
+      # Set SLAPOS_SHOW_OUTPUT=1 to see real-time build output (verbose)
+      - SLAPOS_SHOW_OUTPUT=${SLAPOS_SHOW_OUTPUT:-0}
+      # Allow configure scripts to run as root (required in Docker)
+      - FORCE_UNSAFE_CONFIGURE=1
     # Usage:
     #   docker compose run --rm build-all components
     #   docker compose run --rm build-all software
     #   docker compose run --rm build-all all
     #   docker compose run --rm build-all components --timeout 600
+    #   SLAPOS_CACHE=1 docker compose run --rm build-all components --use-cache
+    #   SLAPOS_SHOW_OUTPUT=1 docker compose run --rm build-all components  # See real-time output
     entrypoint: ["python", "scripts/build_all.py"]
 
+  # Diagnose network cache and build issues
+  diagnose:
+    build: .
+    volumes:
+      - .:/slapos
+      - ./build:/slapos/build
+      - slapos-eggs:/slapos/.eggs
+    working_dir: /slapos
+    environment:
+      - SLAPOS_CACHE=${SLAPOS_CACHE:-0}
+      # Allow configure scripts to run as root (required in Docker)
+      - FORCE_UNSAFE_CONFIGURE=1
+    # Usage:
+    #   docker compose run --rm diagnose
+    command: ["python", "scripts/diagnose_cache.py"]
+
 volumes:
-  slapos-build:
   slapos-eggs:
