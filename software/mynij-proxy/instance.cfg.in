@@ -36,7 +36,6 @@ script = ${:etc}/run/
 # Executables put here will be started and monitored (for daemons)
 service = ${:etc}/service
 log = ${:var}/log
-plugins = ${:etc}/plugins
 ssl = ${:etc}/ssl
 
 
