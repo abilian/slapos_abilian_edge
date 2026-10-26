@@ -1,0 +1,100 @@
+[buildout]
+parts =
+  publish-connection-parameter
+  mynij-proxy-promise
+  mynij-proxy-http-promise
+  mynij-proxy-frontend-promise
+
+# Define egg directories to be the one from Software Release
+# (/opt/slapgrid/...)
+# Always the same.
+eggs-directory = {{ buildout['eggs-directory'] }}
+develop-eggs-directory = {{ buildout['develop-eggs-directory'] }}
+offline = true
+
+extends = {{ template_monitor }}
+
+
+[slap-configuration]
+recipe = slapos.cookbook:slapconfiguration
+computer = ${slap-connection:computer-id}
+partition = ${slap-connection:partition-id}
+url = ${slap-connection:server-url}
+key = ${slap-connection:key-file}
+cert = ${slap-connection:cert-file}
+configuration.port = 3001
+
+
+# Create all needed directories, depending on your needs
+[directory]
+recipe = slapos.cookbook:mkdirectory
+home = ${buildout:directory}
+etc = ${:home}/etc
+var = ${:home}/var
+# Executables put here will be started but not monitored (for startup scripts)
+script = ${:etc}/run/
+# Executables put here will be started and monitored (for daemons)
+service = ${:etc}/service
+log = ${:var}/log
+plugins = ${:etc}/plugins
+ssl = ${:etc}/ssl
+
+
+[mynij-proxy-service]
+# Actual script that starts the service:
+# This recipe will try to "exec" the command-line after separating parameters.
+recipe = slapos.cookbook:wrapper
+host = ${slap-configuration:ipv6-random}
+port = ${slap-configuration:configuration.port}
+url = https://[${:host}]:${:port}
+command-line = {{ gunicorn_bin }} --bind [${:host}]:${:port} -k uvicorn.workers.UvicornWorker -w 4 --keyfile "${certificates:ssl_key}" --certfile "${certificates:ssl_crt}" mynij_proxy:app
+wrapper-path = ${directory:service}/mynij-proxy
+
+
+[request-mynij-proxy-frontend]
+<= slap-connection
+recipe = slapos.cookbook:requestoptional
+name = Mynij Proxy Frontend
+# XXX We have hardcoded SR URL here.
+software-url = http://git.erp5.org/gitweb/slapos.git/blob_plain/HEAD:/software/apache-frontend/software.cfg
+shared = true
+config-url = ${mynij-proxy-service:url}
+return = secure_access domain
+
+
+[mynij-proxy-promise]
+<= monitor-promise-base
+promise = check_socket_listening
+name = mynij-proxy-port-listening.py
+config-host = ${mynij-proxy-service:host}
+config-port = ${mynij-proxy-service:port}
+
+
+[mynij-proxy-http-promise]
+<= monitor-promise-base
+promise = check_url_available
+name = mynij-http-working.py
+config-url = ${mynij-proxy-service:url}/ping
+
+
+[mynij-proxy-frontend-promise]
+<= monitor-promise-base
+promise = check_url_available
+name = mynij-proxy-http-frontend.py
+config-url = ${request-mynij-proxy-frontend:connection-secure_access}/ping
+
+
+# Publish all the parameters needed for the user to connect to the instance.
+[publish-connection-parameter]
+recipe = slapos.cookbook:publish
+<= monitor-publish
+url = ${request-mynij-proxy-frontend:connection-secure_access}
+backend-url = ${mynij-proxy-service:url}
+
+
+[certificates]
+recipe = plone.recipe.command
+command = "{{ openssl_bin }}" req -newkey rsa -batch -new -x509 -days 3650 -nodes -keyout "${:ssl_key}" -out "${:ssl_crt}"
+stop-on-error = true
+ssl_crt = ${directory:ssl}/httpd.crt
+ssl_key = ${directory:ssl}/httpd.key
