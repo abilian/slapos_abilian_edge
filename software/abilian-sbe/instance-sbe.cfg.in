@@ -12,6 +12,7 @@ services = ${:etc}/service
 plugins = ${:etc}/plugin
 ssl = ${:etc}/ssl
 tmp = ${:srv}/tmp
+sbe-instance = ${:srv}/sbe
 # redis
 redis     = ${:srv}/redis
 redis-log = ${:log}/redis
@@ -155,6 +156,9 @@ ipv6 = {{ (ipv6 | list)[0] }}
 ipv4 = {{ (ipv4 | list)[0] }}
 port = 8005
 log-file = ${directory:log}/sbe.log
+# The app's instance folder goes in the partition: by default Flask puts
+# it next to the code, in the read-only software release.
+app = abilian.sbe.app:create_app(instance_path='${directory:sbe-instance}')
 
 
 [sbe-admin]
@@ -164,8 +168,13 @@ passwd = azerty
 
 [sbe-wrapper]
 recipe = slapos.cookbook:wrapper
+# wsgi.py only adds src to sys.path: PYTHONPATH does it here.
+# supervisord starts services with an empty environment: SBE needs PATH
+# (it appends to it, runs ImageMagick's convert, and lessc needs node).
 environment =
-  FLASK_APP=wsgi.py
+  FLASK_APP=${sbe-parameters:app}
+  PYTHONPATH={{parameter_dict['sbe_path']}}/src
+  PATH={{ parameter_dict['imagemagick'] }}/bin:{{ parameter_dict['nodejs'] }}/bin:{{ parameter_dict['coreutils'] }}/bin
   FLASK_SERVER_NAME = ${request-sbe-frontend:connection-domain}
   FLASK_SECRET_KEY="zzzsdqlfkjhqldsfjhoiertzoetryi"
   FLASK_SQLALCHEMY_DATABASE_URI=${postgres-uri:uri}
@@ -195,32 +204,32 @@ environment =
 [sbe-assets]
 <= sbe-wrapper
 command-line =
-  sh -c "cd {{parameter_dict['sbe_path']}} && {{parameter_dict['flask']}} assets build"
+  {{ parameter_dict['dash'] }}/bin/dash -c "cd {{parameter_dict['sbe_path']}} && {{parameter_dict['flask']}} assets build"
 wrapper-path = ${directory:services}/sbe_assets
 
 
 [sbe-initdb]
 <= sbe-wrapper
 command-line =
-  sh -c "cd {{parameter_dict['sbe_path']}} && {{parameter_dict['flask']}} initdb"
+  {{ parameter_dict['dash'] }}/bin/dash -c "cd {{parameter_dict['sbe_path']}} && {{parameter_dict['flask']}} initdb"
 wrapper-path = ${directory:services}/sbe_initdb
 
 
 [sbe-create-admin]
 <= sbe-wrapper
 command-line =
-  sh -c "cd {{parameter_dict['sbe_path']}} && {{parameter_dict['flask']}} createuser --role admin --name admin ${sbe-admin:mail} ${sbe-admin:passwd}"
+  {{ parameter_dict['dash'] }}/bin/dash -c "cd {{parameter_dict['sbe_path']}} && {{parameter_dict['flask']}} createuser --role admin --name admin ${sbe-admin:mail} ${sbe-admin:passwd}"
 wrapper-path = ${directory:services}/sbe_create_admin
 
 
 [gunicorn-cmd]
-command = {{parameter_dict['gunicorn']}} wsgi:app -b [${sbe-parameters:ipv6}]:${sbe-parameters:port} -p ${sbe-parameters:pid-file} --workers 2 --error-logfile ${sbe-parameters:log-file} --log-level debug --timeout 10000
+command = {{parameter_dict['gunicorn']}} \"${sbe-parameters:app}\" -b [${sbe-parameters:ipv6}]:${sbe-parameters:port} -p ${sbe-parameters:pid-file} --workers 2 --error-logfile ${sbe-parameters:log-file} --log-level debug --timeout 10000
 
 
 [sbe-start-gunicorn]
 <= sbe-wrapper
 command-line =
-  sh -c "cd {{parameter_dict['sbe_path']}} && ${gunicorn-cmd:command}"
+  {{ parameter_dict['dash'] }}/bin/dash -c "cd {{parameter_dict['sbe_path']}} && ${gunicorn-cmd:command}"
 wrapper-path = ${directory:services}/sbe_start_gunicorn
 
 

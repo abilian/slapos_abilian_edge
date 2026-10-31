@@ -57,6 +57,7 @@ redis_bin = {{ redis_bin }}
 redis_cli = {{ redis_cli }}
 postgresql_location = {{ postgresql_location }}
 imagemagick = {{ imagemagick }}
+nodejs = {{ nodejs }}
 poppler = {{ poppler }}
 curl = {{ curl }}
 libreoffice_bin = {{ libreoffice_bin }}
