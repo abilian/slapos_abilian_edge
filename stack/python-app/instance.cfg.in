@@ -1,0 +1,230 @@
+{#- Rendered at build time with the app's [python-app] (app) and
+    [python-app-processes] (processes); what it gives the processes is in README.md. -#}
+{%- set name = app['name'] %}
+{%- set database = app['postgresql-bin'] %}
+{%- set health = app['health'] %}
+{%- set secrets = app['secrets'].split() %}
+{#- buildout adds _profile_base_location_ and the like to a section. #}
+{%- set ns = namespace(processes=[]) %}
+{%- for process in processes if process[:1] != '_' %}
+{%-   set ns.processes = ns.processes + [process] %}
+{%- endfor %}
+{%- set process_list = ns.processes %}
+{%- set process_path = [path, app['path'], database] | select | join(':') %}
+[buildout]
+parts =
+{%- if database %}
+  postgresql
+{%- endif %}
+{%- for process in process_list %}
+  process-{{ process }}
+{%- endfor %}
+{%- if 'web' in process_list %}
+  listen-promise
+{%-   if health %}
+  backend-health-promise
+  frontend-health-promise
+{%-   endif %}
+{%- endif %}
+  publish-connection-parameter
+
+eggs-directory = {{ buildout['eggs-directory'] }}
+develop-eggs-directory = {{ buildout['develop-eggs-directory'] }}
+offline = true
+
+extends = {{ template_monitor }}
+
+
+[slap-configuration]
+recipe = slapos.cookbook:slapconfiguration
+computer = ${slap-connection:computer-id}
+partition = ${slap-connection:partition-id}
+url = ${slap-connection:server-url}
+key = ${slap-connection:key-file}
+cert = ${slap-connection:cert-file}
+
+
+[directory]
+recipe = slapos.cookbook:mkdirectory
+home = ${buildout:directory}
+etc = ${:home}/etc
+var = ${:home}/var
+srv = ${:home}/srv
+script = ${:etc}/run
+service = ${:etc}/service
+process = ${:etc}/process
+log = ${:var}/log
+run = ${:var}/run
+tmp = ${:srv}/tmp
+fontconfig-cache = ${:home}/.fontconfig
+
+
+[app-parameters]
+host = ${slap-configuration:ipv6-random}
+port = {{ app['port'] }}
+url = http://[${:host}]:${:port}
+
+{%- if database %}
+
+
+[postgresql-password]
+recipe = slapos.cookbook:generate.password
+
+[postgresql]
+recipe = slapos.cookbook:postgres
+bin = {{ database }}/
+services = ${directory:service}
+dbname = {{ name }}
+superuser = {{ name }}
+password = ${postgresql-password:passwd}
+pgdata-directory = ${directory:srv}/postgresql
+ipv4 = ${slap-configuration:ipv4-random}
+ipv6 =
+port = 5432
+{%- endif %}
+{%- for secret in secrets %}
+
+
+# Must never change once the app has used it: generated once, kept in parts/.
+[secret-{{ secret }}]
+recipe = slapos.cookbook:generate.password
+bytes = 32
+{%- endfor %}
+{%- if app['fonts'] %}
+
+
+[fontconfig-conf]
+recipe = slapos.recipe.template:jinja2
+url = {{ app['fonts-conf'] }}
+output = ${directory:etc}/fonts.conf
+context =
+    key cachedir directory:fontconfig-cache
+    key fonts :fonts
+    key includes :includes
+fonts =
+{%-   for font in app['fonts'].split() %}
+    {{ font }}
+{%-   endfor %}
+includes =
+    {{ app['fontconfig-includes'] }}
+{%- endif %}
+
+
+# The app's own names for what the stack gives ([python-app] environment), as
+# shell lines: FLASK_SERVER_NAME=$DOMAIN.
+[app-environment]
+recipe = slapos.recipe.template
+output = ${directory:etc}/app.env
+inline =
+  :
+{%- for line in app['environment'].splitlines() | select %}
+  export {{ line }}
+{%- endfor %}
+
+# The instance's parameters, as environment variables under their own names
+# (as `hop3 config set`). Read last, so a parameter overrides everything.
+[parameters-environment]
+recipe = slapos.recipe.template:jinja2
+output = ${directory:etc}/parameters.env
+context = key parameters slap-configuration:configuration
+inline =
+{%- raw %}
+  {%- for name, value in parameters | dictsort %}
+  {%-   if name.isidentifier() %}
+  export {{ name }}='{{ value | string | replace("'", "'\\''") }}'
+  {%-   else %}
+  echo "parameters.env: an instance parameter is not a variable name" >&2; exit 1
+  {%-   endif %}
+  {%- endfor %}
+{% endraw %}
+
+
+# Services start with an empty environment: everything a process gets is here.
+[process-base]
+recipe = slapos.cookbook:wrapper
+environment =
+  PATH={{ process_path }}
+  LD_LIBRARY_PATH={{ app['library-path'] }}
+  HOME=${directory:home}
+  TMPDIR=${directory:tmp}
+  LANG=C.UTF-8
+  HOST=${app-parameters:host}
+  PORT=${app-parameters:port}
+  URL=${request-frontend:connection-secure_access}
+  DOMAIN=${request-frontend:connection-domain}
+{%- if database %}
+  DATABASE_URL=postgresql://${postgresql:superuser}:${postgresql:password}@${postgresql:ipv4}:${postgresql:port}/${postgresql:dbname}
+{%- endif %}
+{%- if app['fonts'] %}
+  FONTCONFIG_FILE=${fontconfig-conf:output}
+{%- endif %}
+{%- for secret in secrets %}
+  {{ secret }}=${secret-{{ secret }}:passwd}
+{%- endfor %}
+{%- for process in process_list %}
+{%-   set release = process == 'release' %}
+
+
+# A script run by a shell, as a Procfile line: from the checkout, after the
+# database answers. A service's command is exec'd, so that it gets the signals.
+[process-{{ process }}-script]
+recipe = slapos.recipe.template
+output = ${directory:process}/{{ process }}
+inline =
+  . ${app-environment:output}
+  . ${parameters-environment:output}
+{%-   if database %}
+  until pg_isready -q -h ${postgresql:ipv4} -p ${postgresql:port}; do sleep 2; done
+{%-   endif %}
+  cd {{ app_directory }}
+  {{ '' if release else 'exec ' }}{{ processes[process] }}
+
+# hash-files: a change of command, environment or parameters gives a new
+# wrapper, which supervisord starts in place of the old one.
+[process-{{ process }}]
+<= process-base
+command-line = {{ dash }} ${process-{{ process }}-script:output}
+wrapper-path = ${directory:{{ 'script' if release else 'service' }}}/{{ process }}
+hash-files =
+  ${app-environment:output}
+  ${parameters-environment:output}
+  ${process-{{ process }}-script:output}
+{%- endfor %}
+
+
+[request-frontend]
+<= slap-connection
+recipe = slapos.cookbook:requestoptional
+name = {{ name }} Frontend
+# XXX We have hardcoded SR URL here.
+software-url = http://git.erp5.org/gitweb/slapos.git/blob_plain/HEAD:/software/apache-frontend/software.cfg
+shared = true
+config-url = ${app-parameters:url}
+return = secure_access domain
+
+
+[listen-promise]
+<= monitor-promise-base
+promise = check_socket_listening
+name = {{ name }}-listen.py
+config-host = ${app-parameters:host}
+config-port = ${app-parameters:port}
+
+[backend-health-promise]
+<= monitor-promise-base
+promise = check_url_available
+name = {{ name }}-backend-health.py
+config-url = ${app-parameters:url}{{ health }}
+
+[frontend-health-promise]
+<= monitor-promise-base
+promise = check_url_available
+name = {{ name }}-frontend-health.py
+config-url = ${request-frontend:connection-secure_access}{{ health }}
+
+
+[publish-connection-parameter]
+recipe = slapos.cookbook:publish
+<= monitor-publish
+url = ${request-frontend:connection-secure_access}
+backend-url = ${app-parameters:url}
