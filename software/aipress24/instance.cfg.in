@@ -87,11 +87,32 @@ port = 8024
 url = http://[${:host}]:${:port}
 
 
+# The instance's parameters, as environment variables of the app's processes
+# under their own names (as `hop3 config set`): ENV_FOR_DYNACONF=production,
+# FLASK_S3_ENDPOINT_URL…, which Dynaconf maps over etc/settings.toml. Read after
+# the wrapper's environment, so a parameter overrides it.
+[aipress24-env]
+recipe = slapos.recipe.template:jinja2
+output = ${directory:etc}/aipress24.env
+context = key parameters slap-configuration:configuration
+inline =
+{%- raw %}
+  {%- for name, value in parameters | dictsort %}
+  {%-   if name.isidentifier() %}
+  export {{ name }}='{{ value | string | replace("'", "'\\''") }}'
+  {%-   else %}
+  echo "aipress24.env: an instance parameter is not a variable name" >&2; exit 1
+  {%-   endif %}
+  {%- endfor %}
+{% endraw %}
+
 # Common to the app's processes, which run from the app's checkout (etc/settings.toml).
 # Services start with an empty environment: PATH (git for `flask bootstrap`),
 # and the libraries that WeasyPrint and python-magic load at run time.
+# hash-files: a change of parameters gives new wrappers, which restarts them.
 [aipress24-wrapper]
 recipe = slapos.cookbook:wrapper
+hash-files = ${aipress24-env:output}
 environment =
   PATH={{ bin_directory }}:{{ git_bin }}:{{ postgresql_bin }}
   LD_LIBRARY_PATH={{ library_path }}
@@ -111,25 +132,25 @@ environment =
 [aipress24-bootstrap]
 <= aipress24-wrapper
 command-line =
-  {{ dash }} -c "until {{ postgresql_bin }}/pg_isready -q -h ${postgresql:ipv4} -p ${postgresql:port}; do sleep 2; done && cd {{ app_directory }} && {{ bin_directory }}/aipress24-python scripts/hop3_db_bootstrap.py && {{ bin_directory }}/flask bootstrap && {{ bin_directory }}/flask data bootstrap-users"
+  {{ dash }} -c ". ${aipress24-env:output} && until {{ postgresql_bin }}/pg_isready -q -h ${postgresql:ipv4} -p ${postgresql:port}; do sleep 2; done && cd {{ app_directory }} && {{ bin_directory }}/aipress24-python scripts/hop3_db_bootstrap.py && {{ bin_directory }}/flask bootstrap && {{ bin_directory }}/flask data bootstrap-users"
 wrapper-path = ${directory:script}/aipress24-bootstrap
 
 [aipress24-web]
 <= aipress24-wrapper
 command-line =
-  {{ dash }} -c "cd {{ app_directory }} && exec {{ bin_directory }}/gunicorn -b [${aipress24-parameters:host}]:${aipress24-parameters:port} -w 2 --timeout 180 --error-logfile ${directory:log}/gunicorn.log \"app.flask.main:create_app()\""
+  {{ dash }} -c ". ${aipress24-env:output} && cd {{ app_directory }} && exec {{ bin_directory }}/gunicorn -b [${aipress24-parameters:host}]:${aipress24-parameters:port} -w 2 --timeout 180 --error-logfile ${directory:log}/gunicorn.log \"app.flask.main:create_app()\""
 wrapper-path = ${directory:service}/aipress24-web
 
 [aipress24-worker]
 <= aipress24-wrapper
 command-line =
-  {{ dash }} -c "cd {{ app_directory }} && exec {{ bin_directory }}/dramatiq app.dramatiq.worker_entry --processes 1 --threads 4"
+  {{ dash }} -c ". ${aipress24-env:output} && cd {{ app_directory }} && exec {{ bin_directory }}/dramatiq app.dramatiq.worker_entry --processes 1 --threads 4"
 wrapper-path = ${directory:service}/aipress24-worker
 
 [aipress24-scheduler]
 <= aipress24-wrapper
 command-line =
-  {{ dash }} -c "cd {{ app_directory }} && exec {{ bin_directory }}/flask queue scheduler"
+  {{ dash }} -c ". ${aipress24-env:output} && cd {{ app_directory }} && exec {{ bin_directory }}/flask queue scheduler"
 wrapper-path = ${directory:service}/aipress24-scheduler
 
 
