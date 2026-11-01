@@ -123,7 +123,7 @@ wrapper-path = ${directory:service}/aipress24-web
 [aipress24-worker]
 <= aipress24-wrapper
 command-line =
-  {{ dash }} -c "cd {{ app_directory }} && exec {{ bin_directory }}/flask queue worker --threads 4"
+  {{ dash }} -c "cd {{ app_directory }} && exec {{ bin_directory }}/dramatiq app.dramatiq.worker_entry --processes 1 --threads 4"
 wrapper-path = ${directory:service}/aipress24-worker
 
 [aipress24-scheduler]
