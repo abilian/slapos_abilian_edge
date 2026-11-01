@@ -107,14 +107,15 @@ inline =
 {% endraw %}
 
 # Common to the app's processes, which run from the app's checkout (etc/settings.toml).
-# Services start with an empty environment: PATH (git for `flask bootstrap`),
+# Services start with an empty environment: PATH (git for `flask bootstrap`,
+# coreutils for the bootstrap's sleep),
 # and the libraries that WeasyPrint and python-magic load at run time.
 # hash-files: a change of parameters gives new wrappers, which restarts them.
 [aipress24-wrapper]
 recipe = slapos.cookbook:wrapper
 hash-files = ${aipress24-env:output}
 environment =
-  PATH={{ bin_directory }}:{{ git_bin }}:{{ postgresql_bin }}
+  PATH={{ bin_directory }}:{{ git_bin }}:{{ postgresql_bin }}:{{ coreutils_bin }}
   LD_LIBRARY_PATH={{ library_path }}
   FONTCONFIG_FILE=${fontconfig-conf:output}
   HOME=${directory:home}
