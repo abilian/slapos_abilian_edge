@@ -1,0 +1,88 @@
+# Hop3 Configuration for Radicale (Native build)
+# Simple CalDAV and CardDAV server
+
+[metadata]
+id = "radicale"
+version = "3.2.3"
+title = "Radicale"
+description = "A simple CalDAV and CardDAV server"
+homepage = "https://radicale.org/"
+license = "GPL-3.0"
+author = "Kozea"
+categories = ["calendar", "contacts", "caldav", "carddav"]
+
+[build]
+builder = "local"
+toolchain = "python"
+
+before-build = "bash scripts/download.sh"
+build = "pip install -r requirements.txt"
+
+[run]
+before-run = "bash scripts/setup-config.sh"
+start = "python -m radicale --config config"
+
+# All calendars/contacts live under collections/ (the config's
+# storage.filesystem_folder). A redeploy replaces src/, so without a persistent
+# volume every calendar and address book would be wiped on the next deploy
+# (ADR 046 §2). Persist collections/ outside src/ (<app>/volumes/collections/);
+# it is symlinked back into the source tree at the same relative path, so the
+# `filesystem_folder = collections` in scripts/setup-config.sh keeps pointing at
+# the persisted data.
+[[volumes]]
+name = "collections"
+target = "collections"
+
+# The htpasswd file: the admin's entry, the probe's, and any account an operator
+# adds. Kept outside src/ for the same reason as collections/.
+[[volumes]]
+name = "auth"
+target = "auth"
+
+# Initial admin account (ADR 056). Hop3 generates the password, stores it
+# (retrieve via `hop3 app credentials`), and surfaces it once after deploy. The
+# htpasswd entry itself is written in scripts/setup-config.sh from the injected
+# HOP3_ADMIN_USER/HOP3_ADMIN_PASSWORD. Radicale authenticates by username and
+# has no email field, so no email is set here.
+# Hop3's OWN account for verifying the app keeps working. Radicale has no roles
+# and no user CLI — it reads an htpasswd file — so the probe is simply a second
+# entry, written with the same bcrypt the [admin] entry uses.
+[probe]
+username = "hop3probe"
+create = '''
+python3 -c "
+import bcrypt, os, pathlib
+path = pathlib.Path('auth/users')
+user = os.environ['HOP3_PROBE_USER']
+password = os.environ['HOP3_PROBE_PASSWORD']
+lines = [l for l in path.read_text().splitlines() if not l.startswith(user + ':')]
+hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+lines.append(f'{user}:{hashed}')
+path.write_text('\\n'.join(lines) + '\\n')
+print('probe entry written')
+"
+grep -q "^$HOP3_PROBE_USER:" auth/users || {
+  echo "Radicale probe entry missing from the htpasswd file" >&2
+  exit 1
+}
+'''
+
+[admin]
+username = "admin"
+password = { generate = "password", length = 20 }
+
+[healthcheck]
+path = "/.web/"
+contains = "Radicale"
+
+[test]
+priority = "P1"
+tier = "fast"
+author = "hop3-team"
+targets = ["docker", "remote"]
+covers = ["python"]
+
+[[test.validations]]
+path = "/.web/"
+status = 200
+contains = "Radicale"
