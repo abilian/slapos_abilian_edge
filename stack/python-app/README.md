@@ -60,7 +60,7 @@ At instance time:
 | `path`, `library-path` | More directories for `PATH` and `LD_LIBRARY_PATH` (the libraries the app loads at run time). |
 | `fonts`, `fontconfig-includes`, `fonts-conf` | Font directories and fontconfig's, for a `FONTCONFIG_FILE`. |
 | `copy`, `build-id`, `volumes` | For an app that writes next to its code: with `copy = true` the processes run from a copy of the build in `srv/app`, made again when `build-id` changes. `volumes` are `name target` lines: directories kept in `srv/volumes/<name>`, outside the copy, and linked at `target` in it; an empty one is first filled with what the build left at `target`. |
-| `bind` | `ipv6` (the default): `web` listens on `[$HOST]:$PORT`. `ipv4`: it listens on `$BIND_ADDRESS:$PORT` (or `0.0.0.0`), the partition's IPv4 and a port of its own (20000 + the partition's number), and a haproxy brings the frontend's IPv6 to it. |
+| `bind` | `ipv6` (the default): `web` listens on `[$HOST]:$PORT`. `ipv4`: it listens on `$BIND_ADDRESS:$PORT` (or `0.0.0.0`), with `BIND_ADDRESS` 127.0.0.1 and a port of its own (20000 + the partition's number), and a haproxy brings the frontend's IPv6 to it. As behind Hop3's nginx, the requests come from 127.0.0.1, whose `X-Forwarded-Proto` gunicorn trusts by default. |
 
 ## [python-app-processes]
 
@@ -70,7 +70,7 @@ One option per process, `name = command`, as a Procfile line: a shell runs it fr
 
 | Variable | |
 |---|---|
-| `HOST`, `PORT` | Where `web` listens: the partition's IPv6, `[python-app] port`; with `bind = ipv4`, its IPv4 and a port of its own. |
+| `HOST`, `PORT` | Where `web` listens: the partition's IPv6, `[python-app] port`; with `bind = ipv4`, 127.0.0.1 and a port of its own. |
 | `BIND_ADDRESS` | With `bind = ipv4`: `HOST`, as Hop3 names it. |
 | `URL`, `DOMAIN` | The frontend's URL and domain, once the frontend is allocated. |
 | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `postgresql://user:password@host:port/name`, and its parts as libpq names them, with `postgresql-bin`. |
