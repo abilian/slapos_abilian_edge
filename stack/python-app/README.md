@@ -59,18 +59,21 @@ At instance time:
 | `postgresql-bin` | `${postgresql:location}/bin`, for a database. |
 | `path`, `library-path` | More directories for `PATH` and `LD_LIBRARY_PATH` (the libraries the app loads at run time). |
 | `fonts`, `fontconfig-includes`, `fonts-conf` | Font directories and fontconfig's, for a `FONTCONFIG_FILE`. |
+| `copy`, `build-id`, `volumes` | For an app that writes next to its code: with `copy = true` the processes run from a copy of the build in `srv/app`, made again when `build-id` changes. `volumes` are `name target` lines: directories kept in `srv/volumes/<name>`, outside the copy, and linked at `target` in it; an empty one is first filled with what the build left at `target`. |
+| `bind` | `ipv6` (the default): `web` listens on `[$HOST]:$PORT`. `ipv4`: it listens on `$BIND_ADDRESS:$PORT` (or `0.0.0.0`), the partition's IPv4 and a port of its own (20000 + the partition's number), and a haproxy brings the frontend's IPv6 to it. |
 
 ## [python-app-processes]
 
-One option per process, `name = command`, as a Procfile line: a shell runs it from the checkout, with the environment below, and once the database answers if there is one. Each is a service (restarted by supervisord), except `release`, which runs once at each start (migrations, seeding: it must be idempotent). `web` must listen on `[$HOST]:$PORT`. A command is one line; write `$VAR`, not `${VAR}` (buildout would read it).
+One option per process, `name = command`, as a Procfile line: a shell runs it from the checkout (or its copy), with the environment below, and once the database answers if there is one. Each is a service (restarted by supervisord), except `release`, which runs once at each start (migrations, seeding: it must be idempotent). The services wait for it to succeed with the current parameters and build. `web` must listen on `[$HOST]:$PORT`. A command is one line; write `$VAR`, not `${VAR}` (buildout would read it).
 
 ## What a process gets
 
 | Variable | |
 |---|---|
-| `HOST`, `PORT` | Where `web` listens: the partition's IPv6, `[python-app] port`. |
+| `HOST`, `PORT` | Where `web` listens: the partition's IPv6, `[python-app] port`; with `bind = ipv4`, its IPv4 and a port of its own. |
+| `BIND_ADDRESS` | With `bind = ipv4`: `HOST`, as Hop3 names it. |
 | `URL`, `DOMAIN` | The frontend's URL and domain, once the frontend is allocated. |
-| `DATABASE_URL` | `postgresql://user:password@host:port/name`, with `postgresql-bin`. |
+| `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `postgresql://user:password@host:port/name`, and its parts as libpq names them, with `postgresql-bin`. |
 | `HOME`, `TMPDIR`, `LANG` | In the partition; `C.UTF-8`. |
 | `PATH` | The release's `bin/` (scripts, `app-python`), git, coreutils, PostgreSQL's tools, `[python-app] path`. Nothing else: services start with an empty environment. |
 | each of `secrets` | Its generated value. |

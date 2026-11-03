@@ -11,6 +11,15 @@
 {%- endfor %}
 {%- set process_list = ns.processes %}
 {%- set process_path = [path, app['path'], database] | select | join(':') %}
+{#- The app writes next to its code: it runs from a copy, with its volumes. #}
+{%- set copy = app['copy'] == 'true' %}
+{%- set run_directory = '${workdir:location}' if copy else app_directory %}
+{#- On one line: a buildout value's next lines would need indenting. #}
+{%- set build_id = app['build-id'].split() | join(' ') %}
+{#- The app listens on IPv4 (0.0.0.0, as behind Hop3's proxy): a haproxy
+    brings the frontend's IPv6 to it. #}
+{%- set ipv4 = app['bind'] == 'ipv4' %}
+{%- set release = 'release' in process_list %}
 [buildout]
 parts =
 {%- if database %}
@@ -19,6 +28,9 @@ parts =
 {%- for process in process_list %}
   process-{{ process }}
 {%- endfor %}
+{%- if ipv4 %}
+  haproxy
+{%- endif %}
 {%- if 'web' in process_list %}
   listen-promise
 {%-   if health %}
@@ -59,10 +71,73 @@ tmp = ${:srv}/tmp
 fontconfig-cache = ${:home}/.fontconfig
 
 
+{%- if ipv4 %}
+# Every partition's app binds 0.0.0.0:PORT, so the port is the partition's.
+# ponytail: assumes partitions named slappartN, as on every SlapOS node.
+[app-parameters]
+recipe = slapos.recipe.build
+init =
+  partition = self.buildout['slap-connection']['partition-id']
+  options['port'] = str(20000 + int(partition[len('slappart'):]))
+host = ${slap-configuration:ipv4-random}
+backend-host = ${slap-configuration:ipv6-random}
+url = http://[${:backend-host}]:${:port}
+{%- else %}
 [app-parameters]
 host = ${slap-configuration:ipv6-random}
 port = {{ app['port'] }}
 url = http://[${:host}]:${:port}
+{%- endif %}
+{%- if copy %}
+
+
+# A copy of the build, made again when the build changes; the volumes live
+# outside it, linked at their targets: seeded once from what the build left
+# there, then kept.
+[workdir]
+recipe = slapos.recipe.build
+source = {{ app_directory }}
+build = {{ build_id }}
+location = ${directory:srv}/app
+volumes = ${directory:srv}/volumes
+targets =
+{%-   for line in app['volumes'].splitlines() | select %}
+  {{ line }}
+{%-   endfor %}
+install =
+  import os, shutil
+  shutil.copytree(options['source'], location, symlinks=True)
+  for line in options['targets'].splitlines():
+    if not line.strip():
+      continue
+    name, target = line.split()
+    volume = os.path.join(options['volumes'], name)
+    target = os.path.join(location, target)
+    if not os.path.exists(volume):
+      os.makedirs(options['volumes'], exist_ok=True)
+      if os.path.isdir(target):
+        shutil.move(target, volume)
+      else:
+        os.mkdir(volume)
+    elif os.path.isdir(target):
+      shutil.rmtree(target)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    os.symlink(volume, target)
+{%- endif %}
+{%- if release %}
+
+
+# Services wait for the release to have run with what they run with: its
+# marker is named after the parameters and the build.
+[release-key]
+recipe = slapos.recipe.build
+build = {{ build_id }}
+init =
+  import hashlib
+  parameters = self.buildout['slap-configuration']['configuration']
+  key = repr(sorted(parameters.items())) + options['build']
+  options['marker'] = '${directory:run}/release-' + hashlib.md5(key.encode()).hexdigest()
+{%- endif %}
 
 {%- if database %}
 
@@ -154,6 +229,11 @@ environment =
   DOMAIN=${request-frontend:connection-domain}
 {%- if database %}
   DATABASE_URL=postgresql://${postgresql:superuser}:${postgresql:password}@${postgresql:ipv4}:${postgresql:port}/${postgresql:dbname}
+  PGHOST=${postgresql:ipv4}
+  PGPORT=${postgresql:port}
+  PGUSER=${postgresql:superuser}
+  PGPASSWORD=${postgresql:password}
+  PGDATABASE=${postgresql:dbname}
 {%- endif %}
 {%- if app['fonts'] %}
   FONTCONFIG_FILE=${fontconfig-conf:output}
@@ -161,8 +241,11 @@ environment =
 {%- for secret in secrets %}
   {{ secret }}=${secret-{{ secret }}:passwd}
 {%- endfor %}
+{%- if ipv4 %}
+  BIND_ADDRESS=${app-parameters:host}
+{%- endif %}
 {%- for process in process_list %}
-{%-   set release = process == 'release' %}
+{%-   set is_release = process == 'release' %}
 
 
 # A script run by a shell, as a Procfile line: from the checkout, after the
@@ -176,20 +259,54 @@ inline =
 {%-   if database %}
   until pg_isready -q -h ${postgresql:ipv4} -p ${postgresql:port}; do sleep 2; done
 {%-   endif %}
-  cd {{ app_directory }}
-  {{ '' if release else 'exec ' }}{{ processes[process] }}
+  cd {{ run_directory }}
+{%-   if is_release %}
+  rm -f ${directory:run}/release-*
+  ( {{ processes[process] }} ) && touch ${release-key:marker}
+{%-   else %}
+{%-     if release %}
+  until [ -e ${release-key:marker} ]; do sleep 1; done
+{%-     endif %}
+  exec {{ processes[process] }}
+{%-   endif %}
 
 # hash-files: a change of command, environment or parameters gives a new
 # wrapper, which supervisord starts in place of the old one.
 [process-{{ process }}]
 <= process-base
 command-line = {{ dash }} ${process-{{ process }}-script:output}
-wrapper-path = ${directory:{{ 'script' if release else 'service' }}}/{{ process }}
+wrapper-path = ${directory:{{ 'script' if is_release else 'service' }}}/{{ process }}
 hash-files =
   ${app-environment:output}
   ${parameters-environment:output}
   ${process-{{ process }}-script:output}
 {%- endfor %}
+
+
+{%- if ipv4 %}
+
+
+[haproxy-cfg]
+recipe = slapos.recipe.template
+output = ${directory:etc}/haproxy.cfg
+inline =
+  global
+    maxconn 256
+  defaults
+    mode tcp
+    timeout connect 5s
+    timeout client 1h
+    timeout server 1h
+  listen app
+    bind ipv6@${app-parameters:backend-host}:${app-parameters:port}
+    server app ${app-parameters:host}:${app-parameters:port}
+
+[haproxy]
+recipe = slapos.cookbook:wrapper
+command-line = {{ haproxy }} -db -f ${haproxy-cfg:output}
+wrapper-path = ${directory:service}/haproxy
+hash-files = ${haproxy-cfg:output}
+{%- endif %}
 
 
 [request-frontend]
