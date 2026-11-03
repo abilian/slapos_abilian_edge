@@ -81,7 +81,7 @@ recipe = slapos.recipe.build
 init =
   partition = self.buildout['slap-connection']['partition-id']
   options['port'] = str(20000 + int(partition[len('slappart'):]))
-  # Here, not as ${:port} below: buildout substitutes before init runs.
+  # Here, not as a url option: buildout substitutes those before init runs.
   options['url'] = 'http://[%s]:%s' % (options['backend-host'], options['port'])
 host = 127.0.0.1
 backend-host = ${slap-configuration:ipv6-random}
