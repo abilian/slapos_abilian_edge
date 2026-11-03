@@ -14,7 +14,7 @@ hox port ~/projects/hop3/hop3-catalog/apps/golden/radicale .   # from this check
 |---|---|
 | The recipe's directory, the app's `src/` | `[hop3] files`, fetched next to `software.cfg` into the release (`parts/python-app-git`) |
 | `[build] before-build`, `build`, `after-build` | `[hop3] commands`, run there at build time, with `hop3-fetch`, bash, curl, tar, gzip, grep, sed, findutils and coreutils on `PATH` |
-| The Python toolchain's `pip install -r requirements.txt` | the requirements as eggs, pinned in `versions.cfg`; a `python` (and `python3`) with them |
+| The Python toolchain's `pip install -r requirements.txt` | the requirements as eggs, pinned in `versions.cfg`; a `python` (and `python3`) with them, and their console scripts on `PATH` |
 | `src/` replaced at each deploy, `[[volumes]]` linked into it | the processes run from a copy of the build, made again when it changes, with the volumes linked into it (`copy`, `volumes`) |
 | nginx in front of `$BIND_ADDRESS:$PORT` | `bind = ipv4`, a haproxy from the partition's IPv6 |
 | `[run] before-run`, `[admin] create` | the `release` process |
