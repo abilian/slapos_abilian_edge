@@ -5,6 +5,7 @@ set -e
 : "${PGHOST:?ERROR: PGHOST is required}"
 
 export DATABASE_URL="${DATABASE_URL:-postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}}"
+
 # bugsink_conf.py is the user settings module; bugsink-manage and
 # bugsink.wsgi both set DJANGO_SETTINGS_MODULE=bugsink_conf and add
 # cwd to sys.path. The docker template handles DATABASE_URL parsing.
