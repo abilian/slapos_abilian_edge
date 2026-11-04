@@ -1,0 +1,184 @@
+# Hop3 Configuration for Mattermost (Native build)
+# Team collaboration platform
+
+[metadata]
+id = "mattermost-source"
+version = "9.4.2"
+title = "Mattermost"
+description = "Open source team collaboration platform"
+homepage = "https://mattermost.com/"
+# AGPL-3.0 governs the source when someone else compiles it, as here. The native
+# entry's binary, compiled by Mattermost, Inc., is under MIT.
+license = "AGPL-3.0"
+author = "Mattermost"
+categories = ["collaboration", "chat", "team-communication"]
+
+[build]
+builder = "local"
+# The native entry runs the release Mattermost publishes. This variant builds it,
+# for platforms that build everything they run from source.
+toolchain = "go"
+
+# Download the source
+before-build = "bash scripts/download.sh"
+
+# The web client, then the server, as the source's Makefile does without its
+# checks and plugin downloads. .npmrc refuses any Node but 18; --ignore-scripts
+# skips what only tests and native extras fetch, and `run build` builds the
+# workspace packages that a postinstall would. webpack needs more than Node's
+# default heap, and source maps took it past 4 GB, so they are left out. Images
+# aren't compressed, since that runs prebuilt binaries (mozjpeg, gifsicle). go.work makes the server use ./public from this source, as the
+# Makefile's setup-go-work does. The source goes at the end: only what the
+# release ships stays.
+build = [
+  "npm --prefix webapp ci --include=dev --ignore-scripts --no-engine-strict",
+  "sed -i \"s/config.devtool = 'source-map';/config.devtool = false;/\" webapp/channels/webpack.config.js",
+  "sed -i '/image-webpack-loader/{n;s/options: {}/options: {disable: true}/}' webapp/channels/webpack.config.js",
+  "NODE_OPTIONS=--max-old-space-size=3072 npm --prefix webapp run build",
+  "go -C server work init",
+  "go -C server work use . ./public",
+  "go -C server build -trimpath -buildvcs=false -tags production -ldflags '-X github.com/mattermost/mattermost/server/public/model.BuildNumber=9.4.2 -X github.com/mattermost/mattermost/server/public/model.BuildEnterpriseReady=false' -o ../bin/ ./cmd/mattermost ./cmd/mmctl",
+  "cp -RL server/fonts server/templates server/i18n .",
+  "cp -RL webapp/channels/dist/. client/",
+  "rm -rf webapp server e2e-tests api tools",
+]
+
+[run]
+before-run = "bash scripts/setup-config.sh"
+start = "./bin/mattermost"
+
+[[addons]]
+type = "postgres"
+
+# Initial admin account (ADR 056). Hop3 generates the password once (stable
+# across redeploys), stores it encrypted (retrieve via `hop3 app credentials`),
+# surfaces it once after deploy, and injects HOP3_ADMIN_USER/EMAIL/PASSWORD into
+# the app runtime. Mattermost has no env-var admin bootstrap, so the account is
+# created post-deploy via the bundled mmctl in local mode (see [admin].create).
+# email = "operator" -> the server's OPERATOR_EMAIL (mmctl requires an email).
+# Hop3's OWN account for verifying the app keeps working — a plain member, not
+# a system admin. Its password is Hop3's to rotate, so a refused sign-in means
+# the app broke, unlike the [admin] credential once the operator changes it.
+[probe]
+username = "hop3probe"
+email = "probe@hop3.invalid"
+create = '''
+sock="$(pwd)/mattermost_local.socket"
+export MMCTL_LOCAL_SOCKET_PATH="$sock"
+i=0
+while [ ! -S "$sock" ]; do
+  i=$((i + 1))
+  if [ "$i" -gt 60 ]; then
+    echo "Mattermost local-mode socket $sock never appeared (120s); cannot create the probe" >&2
+    exit 1
+  fi
+  sleep 2
+done
+if ! bin/mmctl --local user search "$HOP3_PROBE_USER" 2>/dev/null | grep -q "$HOP3_PROBE_USER"; then
+  bin/mmctl --local user create --username "$HOP3_PROBE_USER" \
+    --email "$HOP3_PROBE_EMAIL" --password "$HOP3_PROBE_PASSWORD"
+fi
+bin/mmctl --local user search "$HOP3_PROBE_USER" 2>/dev/null | grep -q "$HOP3_PROBE_USER" || {
+  echo "Mattermost probe account missing after user create" >&2
+  exit 1
+}
+'''
+
+[admin]
+username = "admin"
+email = "operator"
+password = { generate = "password", length = 20 }
+# Runs once post-deploy in src/ (cwd), with HOP3_ADMIN_* in env, failing the
+# deploy loud on a non-zero exit. Local mode talks to the running server over a
+# unix socket (no network auth); MMCTL_LOCAL_SOCKET_PATH must match
+# ServiceSettings.LocalModeSocketLocation written by scripts/setup-config.sh.
+# The socket lives under the per-app src/ dir so multiple Mattermost instances
+# never collide on the shared /var/tmp default. Idempotent (create-if-absent)
+# and fail-loud: it waits for the server's local-mode socket, then creates the
+# system admin only if it does not already exist. mmctl's plain CreateUser
+# bypasses the disabled web signup, so the admin is still created.
+create = '''
+set -e
+: "${HOP3_ADMIN_USER:?admin bootstrap: HOP3_ADMIN_USER not injected}"
+: "${HOP3_ADMIN_EMAIL:?admin bootstrap: HOP3_ADMIN_EMAIL not injected (set [admin].email)}"
+: "${HOP3_ADMIN_PASSWORD:?admin bootstrap: HOP3_ADMIN_PASSWORD not injected}"
+sock="$(pwd)/mattermost_local.socket"
+export MMCTL_LOCAL_SOCKET_PATH="$sock"
+i=0
+while [ ! -S "$sock" ]; do
+  i=$((i + 1))
+  if [ "$i" -gt 60 ]; then
+    echo "Mattermost local-mode socket $sock never appeared (120s); cannot create admin" >&2
+    exit 1
+  fi
+  sleep 2
+done
+if ./bin/mmctl --local user list --all | grep -Fq ": $HOP3_ADMIN_USER ("; then
+  echo "Admin user '$HOP3_ADMIN_USER' already exists; skipping creation."
+else
+  ./bin/mmctl --local user create --system-admin --email-verified \
+    --email "$HOP3_ADMIN_EMAIL" \
+    --username "$HOP3_ADMIN_USER" \
+    --password "$HOP3_ADMIN_PASSWORD"
+fi
+'''
+
+[env]
+# SiteURL is set in scripts/setup-config.sh from the injected HOP3_PUBLIC_URL
+# (Mattermost needs the real public https URL for links, CORS, and integrations).
+
+# Data-at-rest encryption key (SqlSettings.AtRestEncryptKey). Mattermost encrypts
+# certain fields at rest with this key, so it MUST stay stable across redeploys:
+# a fresh key each deploy would make previously encrypted data undecryptable.
+# Generated ONCE on first deploy (base64 of 32 random bytes — the same format as
+# Mattermost's own key, >=32 chars) and re-injected unchanged on every redeploy
+# (ADR 046). scripts/setup-config.sh reads ${MM_ATRESTKEY} instead of minting one.
+MM_ATRESTKEY = { generate = "base64" }
+
+[healthcheck]
+path = "/api/v4/system/ping"
+contains = "status"
+
+# Every deploy replaces src/, so each directory the app writes to is a volume.
+# data/ holds every uploaded file: kept. Mattermost rewrites its web client
+# (client/) and config.json at start, and unpacks plugins from the file
+# store into plugins/: all reset on every deploy, config.json being written
+# again by scripts/setup-config.sh from the platform's values.
+[[volumes]]
+name = "data"
+target = "data"
+
+[[volumes]]
+name = "config"
+target = "config"
+type = "scratch"
+
+[[volumes]]
+name = "client"
+target = "client"
+type = "scratch"
+
+[[volumes]]
+name = "plugins"
+target = "plugins"
+type = "scratch"
+
+[test]
+priority = "P1"
+tier = "medium"
+author = "hop3-team"
+targets = ["docker", "remote"]
+covers = ["golang", "postgresql"]
+
+[[test.validations]]
+path = "/api/v4/system/ping"
+status = 200
+contains = "status"
+
+# The web client, served as a page. The REST ping and check.py's API sign-in
+# both pass with no client at all, which is how the Nix variants served
+# "client/root.html: no such file" to every browser and still passed.
+[[test.validations]]
+path = "/login"
+status = 200
+contains = "<title>Mattermost</title>"
