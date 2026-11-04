@@ -20,7 +20,8 @@ hox port ~/projects/hop3/hop3-catalog/apps/golden/radicale .   # from this check
 | A Go app, found by its `go.mod` with `hox port --source` | SlapOS's Go, built from source, on `PATH`; no eggs and no `versions.cfg`; `GOTOOLCHAIN=local`, so that Go doesn't fetch a binary toolchain |
 | `src/` replaced at each deploy, `[[volumes]]` linked into it | the processes run from a copy of the build, made again when it changes, with the volumes linked into it (`copy`, `volumes`) |
 | nginx in front of `$BIND_ADDRESS:$PORT` | `bind = ipv4`, a haproxy from the partition's IPv6 |
-| `[run] before-run`, `[admin] create` | the `release` process |
+| `[run] before-run` | the `release` process |
+| `[admin] create`, run once after the app starts | the `after-start` process |
 | `[run] start`, `[run.workers]` | `web`, and a service each |
 | `[env]` literals, references to the domain, `[env.computed]` | `environment` lines |
 | `[env]` generated secrets, the `[admin]` password | `secrets`: `NAME:hex`, `NAME:base64`, `NAME:urlsafe` from 32 bytes, as Hop3's defaults; passwords of 32 characters |

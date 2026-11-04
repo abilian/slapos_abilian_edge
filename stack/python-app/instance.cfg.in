@@ -72,9 +72,9 @@ fontconfig-cache = ${:home}/.fontconfig
 
 
 {%- if ipv4 %}
-# Every partition's app binds 0.0.0.0:PORT or :PORT, so the port is the
-# partition's. haproxy has another one: :PORT also takes the IPv6 wildcard, and
-# would collide with haproxy's bind on the same port number.
+# Every partition's app binds a wildcard, so the port is the partition's.
+# haproxy has another one: in Go, :PORT and 0.0.0.0:PORT both take the IPv6
+# wildcard, and would collide with haproxy's bind on the same port number.
 # haproxy reaches the app on 127.0.0.1, as Hop3's nginx does: gunicorn then
 # trusts the frontend's X-Forwarded-Proto, and Django sees https.
 # ponytail: assumes partitions named slappartN, as on every SlapOS node.
@@ -273,6 +273,7 @@ environment =
 {%- endif %}
 {%- for process in process_list %}
 {%-   set is_release = process == 'release' %}
+{%-   set is_after_start = process == 'after-start' %}
 
 
 # A script run by a shell, as a Procfile line: from the checkout, after the
@@ -294,7 +295,13 @@ inline =
 {%-     if release %}
   until [ -e ${release-key:marker} ]; do sleep 1; done
 {%-     endif %}
+{%-     if is_after_start %}
+  [ -e ${directory:srv}/after-start-done ] && exit 0
+  until ( {{ processes[process] }} ); do sleep 10; done
+  touch ${directory:srv}/after-start-done
+{%-     else %}
   exec {{ processes[process] }}
+{%-     endif %}
 {%-   endif %}
 
 # hash-files: a change of command, environment or parameters gives a new
@@ -302,7 +309,7 @@ inline =
 [process-{{ process }}]
 <= process-base
 command-line = {{ dash }} ${process-{{ process }}-script:output}
-wrapper-path = ${directory:{{ 'script' if is_release else 'service' }}}/{{ process }}
+wrapper-path = ${directory:{{ 'script' if is_release or is_after_start else 'service' }}}/{{ process }}
 hash-files =
   ${app-environment:output}
   ${parameters-environment:output}
