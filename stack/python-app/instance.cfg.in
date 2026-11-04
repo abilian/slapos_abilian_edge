@@ -131,14 +131,16 @@ install =
 
 
 # Services wait for the release to have run with what they run with: its
-# marker is named after the parameters and the build.
+# marker is named after the parameters, the build and the frontend's URL, which
+# comes after the first run and which release scripts write into configuration.
 [release-key]
 recipe = slapos.recipe.build
 build = {{ build_id }}
+frontend = ${request-frontend:connection-secure_access}
 init =
   import hashlib
   parameters = self.buildout['slap-configuration']['configuration']
-  key = repr(sorted(parameters.items())) + options['build']
+  key = repr(sorted(parameters.items())) + options['build'] + options['frontend']
   options['marker'] = '${directory:run}/release-' + hashlib.md5(key.encode()).hexdigest()
 {%- endif %}
 
