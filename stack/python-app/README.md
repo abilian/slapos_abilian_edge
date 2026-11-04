@@ -80,3 +80,28 @@ One option per process, `name = command`, as a Procfile line: a shell runs it fr
 | each instance parameter | Under its own name, last: a parameter overrides everything (as `hop3 config set`). |
 
 The release is read-only for the partition: an app writes under `HOME` or `TMPDIR`, never next to its code. A change of command, environment or parameters gives new wrappers (`hash-files`), so supervisord restarts the processes.
+
+## A venv in place of buildout's eggs
+
+Buildout installs eggs with SlapOS's pip and setuptools, and without an index, which many recent sdists can't build with. `venv.cfg` installs the app in a venv of its own instead, created from SlapOS's Python, with the pip that Python bundles. Compiled packages are built from their sdists, and pure ones stay wheels.
+
+```ini
+[buildout]
+extends =
+  ../../component/libffi/buildout.cfg
+  ../../stack/python-app/buildout.cfg
+  ../../stack/python-app/venv.cfg
+
+[python-app-requirements]
+url = ${:_profile_base_location_}/requirements.txt
+md5sum = …
+
+[python-app]
+no-binary = cffi markupsafe
+build-libraries = ${libffi:location}
+uploaded-prior-to = 2026-11-04T12:00:00Z
+```
+
+`requirements.txt` holds the pins with their hashes (`uv pip compile --generate-hashes`). `hox port --venv` writes all of this for a Hop3 recipe, which also extends `stack/hop3/venv.cfg` last.
+
+The build needs PyPI, and SlapOS's network cache doesn't cover these packages, so a new node builds them again. `eggs`, `scripts`, `setup-eggs` and `source` don't apply. `egg` installs the checkout into the venv. The commands stay on the processes' `PATH`, with `app-python` as the venv's Python.
