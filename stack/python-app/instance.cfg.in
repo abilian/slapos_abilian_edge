@@ -163,12 +163,29 @@ ipv6 =
 port = 5432
 {%- endif %}
 {%- for secret in secrets %}
+{%-   set name, kind = (secret ~ ':').split(':')[:2] %}
 
 
 # Must never change once the app has used it: generated once, kept in parts/.
-[secret-{{ secret }}]
+[secret-{{ name }}]
 recipe = slapos.cookbook:generate.password
 bytes = 32
+{%-   if kind %}
+
+# 32 bytes from it, as NAME:kind in secrets asks: for the apps that decode theirs.
+[secret-{{ name }}-encoded]
+recipe = slapos.recipe.build
+passwd = ${secret-{{ name }}:passwd}
+kind = {{ kind }}
+init =
+  import base64, hashlib
+  raw = hashlib.sha256(options['passwd'].encode()).digest()
+  options['value'] = {
+    'hex': raw.hex(),
+    'base64': base64.b64encode(raw).decode(),
+    'urlsafe': base64.urlsafe_b64encode(raw).rstrip(b'=').decode(),
+  }[options['kind']]
+{%-   endif %}
 {%- endfor %}
 {%- if app['fonts'] %}
 
@@ -239,12 +256,14 @@ environment =
   PGUSER=${postgresql:superuser}
   PGPASSWORD=${postgresql:password}
   PGDATABASE=${postgresql:dbname}
+  PGSSLMODE=disable
 {%- endif %}
 {%- if app['fonts'] %}
   FONTCONFIG_FILE=${fontconfig-conf:output}
 {%- endif %}
 {%- for secret in secrets %}
-  {{ secret }}=${secret-{{ secret }}:passwd}
+{%-   set name, kind = (secret ~ ':').split(':')[:2] %}
+  {{ name }}=${secret-{{ name }}{{ '-encoded:value' if kind else ':passwd' }}}
 {%- endfor %}
 {%- if ipv4 %}
   BIND_ADDRESS=${app-parameters:host}

@@ -55,7 +55,7 @@ At instance time:
 | `port` | The port `web` listens on (8080). |
 | `health` | A path that answers 200 when the app is up (`/health`): checked on the backend and through the frontend, by promises. |
 | `environment` | Shell lines exported to every process, after the stack's variables: the app's own names for them (`FLASK_SERVER_NAME=$DOMAIN`). |
-| `secrets` | Variable names, each given a random value generated once and kept: `SECRET_KEY`. |
+| `secrets` | Variable names, each given a random value generated once and kept: `SECRET_KEY`. `NAME:hex`, `NAME:base64` or `NAME:urlsafe` for 32 random bytes in that encoding. |
 | `postgresql-bin` | `${postgresql:location}/bin`, for a database. |
 | `path`, `library-path` | More directories for `PATH` and `LD_LIBRARY_PATH` (the libraries the app loads at run time). |
 | `fonts`, `fontconfig-includes`, `fonts-conf` | Font directories and fontconfig's, for a `FONTCONFIG_FILE`. |
@@ -73,7 +73,7 @@ One option per process, `name = command`, as a Procfile line: a shell runs it fr
 | `HOST`, `PORT` | Where `web` listens: the partition's IPv6, `[python-app] port`; with `bind = ipv4`, 127.0.0.1 and a port of its own. |
 | `BIND_ADDRESS` | With `bind = ipv4`: `HOST`, as Hop3 names it. |
 | `URL`, `DOMAIN` | The frontend's URL and domain, once the frontend is allocated. |
-| `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `postgresql://user:password@host:port/name`, and its parts as libpq names them, with `postgresql-bin`. |
+| `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE` | `postgresql://user:password@host:port/name`, and its parts as libpq names them (`PGSSLMODE=disable`: the partition's PostgreSQL has no TLS, and some drivers require it by default), with `postgresql-bin`. |
 | `HOME`, `TMPDIR`, `LANG` | In the partition; `C.UTF-8`. |
 | `PATH` | The release's `bin/` (scripts, `app-python`), git, coreutils, PostgreSQL's tools, `[python-app] path`. Nothing else: services start with an empty environment. |
 | each of `secrets` | Its generated value. |
