@@ -72,17 +72,20 @@ fontconfig-cache = ${:home}/.fontconfig
 
 
 {%- if ipv4 %}
-# Every partition's app binds 0.0.0.0:PORT, so the port is the partition's.
-# haproxy reaches it on 127.0.0.1, as Hop3's nginx does: gunicorn then trusts
-# the frontend's X-Forwarded-Proto, and Django sees https.
+# Every partition's app binds 0.0.0.0:PORT or :PORT, so the port is the
+# partition's. haproxy has another one: :PORT also takes the IPv6 wildcard, and
+# would collide with haproxy's bind on the same port number.
+# haproxy reaches the app on 127.0.0.1, as Hop3's nginx does: gunicorn then
+# trusts the frontend's X-Forwarded-Proto, and Django sees https.
 # ponytail: assumes partitions named slappartN, as on every SlapOS node.
 [app-parameters]
 recipe = slapos.recipe.build
 init =
-  partition = self.buildout['slap-connection']['partition-id']
-  options['port'] = str(20000 + int(partition[len('slappart'):]))
+  partition = int(self.buildout['slap-connection']['partition-id'][len('slappart'):])
+  options['port'] = str(30000 + partition)
+  options['backend-port'] = str(20000 + partition)
   # Here, not as a url option: buildout substitutes those before init runs.
-  options['url'] = 'http://[%s]:%s' % (options['backend-host'], options['port'])
+  options['url'] = 'http://[%s]:%s' % (options['backend-host'], options['backend-port'])
 host = 127.0.0.1
 backend-host = ${slap-configuration:ipv6-random}
 {%- else %}
@@ -323,7 +326,7 @@ inline =
     timeout client 1h
     timeout server 1h
   listen app
-    bind ipv6@${app-parameters:backend-host}:${app-parameters:port}
+    bind ipv6@${app-parameters:backend-host}:${app-parameters:backend-port}
     server app ${app-parameters:host}:${app-parameters:port}
 {%- raw %}
   {{ "\n" }}
