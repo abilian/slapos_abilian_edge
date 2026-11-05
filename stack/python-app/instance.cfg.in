@@ -134,8 +134,9 @@ install =
 
 
 # Services wait for the release to have run with what they run with: its
-# marker is named after the parameters, the build and the frontend's URL, which
-# comes after the first run and which release scripts write into configuration.
+# marker is named after the parameters, the build and the frontend's URL. That
+# URL comes after the instance's first run, and release scripts write it into
+# configuration, so the release does nothing until it is there.
 [release-key]
 recipe = slapos.recipe.build
 build = {{ build_id }}
@@ -290,6 +291,7 @@ inline =
   cd {{ run_directory }}
 {%-   if is_release %}
   rm -f ${directory:run}/release-*
+  [ -n "$URL" ] || exit 0
   ( {{ processes[process] }} ) && touch ${release-key:marker}
 {%-   else %}
 {%-     if release %}
