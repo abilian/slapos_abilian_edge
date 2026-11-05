@@ -1,0 +1,99 @@
+# Hop3 Configuration for Uptime Kuma (Native build)
+# Self-hosted uptime monitoring and status pages, with a real web UI
+
+[metadata]
+id = "uptime-kuma"
+version = "2.4.0"
+title = "Uptime Kuma"
+description = "Self-hosted uptime monitoring with a web UI and status pages"
+homepage = "https://uptime.kuma.pet/"
+license = "MIT"
+author = "Louis Lam"
+categories = ["monitoring", "status-page", "observability"]
+
+[build]
+builder = "local"
+toolchain = "node"
+
+before-build = "bash scripts/download.sh"
+# Build the frontend from the committed lockfile, so the deployed tree is one we
+# produced and can reproduce. `npm ci` not `npm install`: it installs exactly the
+# lock and fails rather than silently updating it. Upstream ships no self-hosting
+# build artifact outside its Docker image, so this is also the only source path.
+build = [
+  "npm ci",
+  "npm run build",
+]
+# The frontend build is invisible at deploy time — the server still answers on /
+# while serving nothing — so assert it produced a bundle rather than letting a
+# blank page be the first symptom.
+after-build = "test -d dist && test -n \"$(ls -A dist)\" || { echo 'Uptime Kuma frontend build produced no dist/ (npm run build failed silently?)' >&2; exit 1; }"
+
+[run]
+# Pick the database before the app starts: without data/db-config.json,
+# Uptime Kuma 2.x serves only its database-chooser wizard and never migrates.
+before-run = "bash scripts/setup-config.sh"
+start = "node server/server.js"
+# First start runs the schema migrations before listening; the frontend is
+# already built by then, but the migrations on a cold SQLite file are not instant.
+start-timeout = 180
+
+# Uptime Kuma keeps everything — monitors, history, users, settings — in a single
+# SQLite file under DATA_DIR. That lives inside the app tree, which a redeploy
+# replaces, so without this volume every monitor and all recorded history would
+# be silently lost on the next deploy (and the admin account with them).
+[[volumes]]
+name = "data"
+target = "data"
+
+[env]
+# Uptime Kuma reads its data location from DATA_DIR (server/database.js) and its
+# listen port from PORT, which Hop3 injects.
+DATA_DIR = "./data/"
+NODE_ENV = "production"
+
+# Initial admin account (ADR 056). Uptime Kuma authenticates by USERNAME; its
+# user model has no email field, so none is declared here.
+#
+# No `create` command: the account has to exist BEFORE the server starts, or
+# Uptime Kuma's startup "needs setup?" check goes stale and it keeps serving the
+# setup wizard over a perfectly good account. So the app bootstraps itself from
+# the injected HOP3_ADMIN_* in before-run (scripts/setup-config.sh).
+# Hop3's OWN account for verifying the app keeps working. Its password is Hop3's
+# to rotate, so a refused sign-in means the app broke — unlike the [admin]
+# credential, which stops being ours once the operator changes it.
+#
+# Uptime Kuma has no roles, so this account is as privileged as the admin; that
+# is the app's model, not a choice. Created in before-run alongside the admin
+# (see scripts/create-admin.js), so no create command here.
+[probe]
+username = "hop3probe"
+# Hop3 runs this and checks it exits 0, which is the only way it can know the
+# account exists. Creating the probe inside the app's own bootstrap looked
+# equivalent and was not: it only ran when the ADMIN was also created, so any
+# instance with an existing user silently had no probe and nothing detected it.
+create = "node scripts/create-probe.js"
+
+[admin]
+username = "admin"
+password = { generate = "password", length = 20 }
+
+# `/` is a 302 to /dashboard, so check the page that actually serves the app.
+[healthcheck]
+path = "/dashboard"
+contains = "Uptime Kuma"
+
+[test]
+priority = "P2"
+tier = "slow"
+author = "hop3-team"
+targets = ["docker", "remote"]
+covers = ["node", "sqlite", "monitoring", "vite"]
+
+# `/` is a server-side 302 to /dashboard, so assert the page that serves the
+# built SPA. Checking its title proves the frontend build landed, rather than
+# that something merely answered with a 200.
+[[test.validations]]
+path = "/dashboard"
+status = 200
+contains = "Uptime Kuma"

@@ -20,6 +20,9 @@ hox port ~/projects/hop3/hop3-catalog/apps/golden/radicale .   # from this check
 | A Go app, found by its `go.mod` with `hox port --source` | SlapOS's Go, built from source, on `PATH`; no eggs and no `versions.cfg`; `GOTOOLCHAIN=local`, so that Go doesn't fetch a binary toolchain |
 | `src/` replaced at each deploy, `[[volumes]]` linked into it | the processes run from a copy of the build, made again when it changes, with the volumes linked into it (`copy`, `volumes`) |
 | nginx in front of `$BIND_ADDRESS:$PORT` | `bind = ipv4`, a haproxy from the partition's IPv6 |
+| The Node toolchain | Node on `PATH`; `npm` compiles native modules from source (`npm_config_build_from_source`, with the headers of SlapOS's Node) |
+| The PHP toolchain: php-fpm behind nginx | `php.cfg`, listed after this stack, with its components before: the `fpm` and `web` processes, on `component/apache-php` at PHP 8.3 (the PHP of a Hop3 host on Ubuntu 24.04), with PostgreSQL and SQLite; `PHPRC` for `php` and php-fpm |
+| `[proxy] deny`, for a PHP app | `HOP3_PROXY_DENY`: those paths answer 404, as hidden files do |
 | `[run] before-run` | the `release` process |
 | `[admin] create`, run once after the app starts | the `after-start` process |
 | `[run] start`, `[run.workers]` | `web`, and a service each |
@@ -34,4 +37,4 @@ hox port ~/projects/hop3/hop3-catalog/apps/golden/radicale .   # from this check
 
 `toolchain = "generic"`, a recipe that fetches a prebuilt binary, is ported as it is, with a note and a comment in `software.cfg`: provisional, since a SlapOS release builds from source. The end state is a port of a variant of the recipe that builds the app.
 
-Not mapped yet: other toolchains (PHP, Node), other builders (Docker, Nix), the MySQL, Redis, S3 and email addons, `[probe]`, `[[ports]]`, `[access]`, `[waf]`, and `[build]`/`[run]` `packages`. `hox port` lists what a recipe has that it leaves out, and refuses what it can't build.
+Not mapped yet: other toolchains, other builders (Docker, Nix), `composer`, `[build] document-root`, the MySQL, Redis, S3 and email addons, `[probe]`, `[[ports]]`, `[access]`, `[waf]`, and `[build]`/`[run]` `packages`. `hox port` lists what a recipe has that it leaves out, and refuses what it can't build.
