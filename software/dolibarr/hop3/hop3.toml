@@ -1,0 +1,60 @@
+# Hop3 Configuration for Dolibarr (Native build)
+# Open source ERP and CRM
+
+[metadata]
+id = "dolibarr"
+version = "19.0"
+title = "Dolibarr"
+description = "Open source ERP and CRM for small and medium businesses"
+homepage = "https://www.dolibarr.org/"
+license = "GPL-3.0"
+author = "Dolibarr ERP & CRM"
+categories = ["erp", "crm", "invoicing", "business"]
+
+[build]
+builder = "local"
+toolchain = "php"
+
+before-build = "bash scripts/download.sh"
+build = "composer install --no-dev --optimize-autoloader || true"
+
+[run]
+before-run = "bash scripts/setup-config.sh"
+
+[[addons]]
+type = "postgres"
+
+# documents/ holds uploads, generated PDFs, and install.lock. It lives inside the
+# app tree, which a redeploy replaces — so without this volume every attachment
+# would be lost and, worse, the missing install.lock would make the next deploy
+# try to install over a populated database.
+[[volumes]]
+name = "documents"
+target = "documents"
+
+# Initial admin account (ADR 056). Dolibarr authenticates by LOGIN NAME and has
+# no email on the account, so only a username is declared. Its installer is a
+# browser wizard with no CLI, so scripts/setup-config.sh drives the same steps
+# through their argv interface and verifies the account exists afterwards.
+[admin]
+username = "admin"
+password = { generate = "password", length = 20 }
+
+[healthcheck]
+path = "/"
+contains = "name=\"username\""
+
+[test]
+priority = "P1"
+tier = "medium"
+author = "hop3-team"
+targets = ["docker", "remote"]
+covers = ["php", "postgresql"]
+
+# "Dolibarr" alone also appears on the INSTALLER page, so this passed for an app
+# that had never been installed. Assert the login form instead: it is served only
+# once the installer has completed and locked itself.
+[[test.validations]]
+path = "/"
+status = 200
+contains = "name=\"username\""

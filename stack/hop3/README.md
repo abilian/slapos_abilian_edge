@@ -37,4 +37,4 @@ hox port ~/projects/hop3/hop3-catalog/apps/golden/radicale .   # from this check
 
 `toolchain = "generic"`, a recipe that fetches a prebuilt binary, is ported as it is, with a note and a comment in `software.cfg`: provisional, since a SlapOS release builds from source. The end state is a port of a variant of the recipe that builds the app.
 
-Not mapped yet: other toolchains, other builders (Docker, Nix), `composer`, `[build] document-root`, the MySQL, Redis, S3 and email addons, `[probe]`, `[[ports]]`, `[access]`, `[waf]`, and `[build]`/`[run]` `packages`. `hox port` lists what a recipe has that it leaves out, and refuses what it can't build.
+Not mapped yet: other toolchains, other builders (Docker, Nix), `composer` (not on `PATH`, so a recipe's `composer install … || true` does nothing), `[build] document-root`, the MySQL, Redis, S3 and email addons, `[probe]`, `[[ports]]`, `[access]`, `[waf]`, and `[build]`/`[run]` `packages`. `hox port` lists what a recipe has that it leaves out, and refuses what it can't build.
