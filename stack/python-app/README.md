@@ -57,6 +57,7 @@ At instance time:
 | `environment` | Shell lines exported to every process, after the stack's variables: the app's own names for them (`FLASK_SERVER_NAME=$DOMAIN`). |
 | `secrets` | Variable names, each given a random value generated once and kept: `SECRET_KEY`. `NAME:hex`, `NAME:base64` or `NAME:urlsafe` for 32 random bytes in that encoding. |
 | `postgresql-bin` | `${postgresql:location}/bin`, for a database. |
+| `mariadb-bin` | `${mariadb:location}/bin`, for a MariaDB database in the partition. |
 | `path`, `library-path` | More directories for `PATH` and `LD_LIBRARY_PATH` (the libraries the app loads at run time). |
 | `fonts`, `fontconfig-includes`, `fonts-conf` | Font directories and fontconfig's, for a `FONTCONFIG_FILE`. |
 | `copy`, `build-id`, `volumes` | For an app that writes next to its code: with `copy = true` the processes run from a copy of the build in `srv/app`, made again when `build-id` changes. `volumes` are `name target` lines: directories kept in `srv/volumes/<name>`, outside the copy, and linked at `target` in it; an empty one is first filled with what the build left at `target`. |
@@ -74,6 +75,7 @@ One option per process, `name = command`, as a Procfile line: a shell runs it fr
 | `BIND_ADDRESS` | With `bind = ipv4`: `HOST`, as Hop3 names it. |
 | `URL`, `DOMAIN` | The frontend's URL and domain, once the frontend is allocated. |
 | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE` | `postgresql://user:password@host:port/name`, and its parts as libpq names them (`PGSSLMODE=disable`: the partition's PostgreSQL has no TLS, and some drivers require it by default), with `postgresql-bin`. |
+| `DATABASE_URL`, `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | With `mariadb-bin`: `mysql://user:password@host:port/name`, and its parts as Hop3's addon names them. |
 | `HOME`, `TMPDIR`, `LANG` | In the partition; `C.UTF-8`. |
 | `PATH` | The release's `bin/` (scripts, `app-python`), git, coreutils, PostgreSQL's tools, `[python-app] path`. Nothing else: services start with an empty environment. |
 | each of `secrets` | Its generated value. |

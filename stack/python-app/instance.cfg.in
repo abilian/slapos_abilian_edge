@@ -2,6 +2,7 @@
     [python-app-processes] (processes); what it gives the processes is in README.md. -#}
 {%- set name = app['name'] %}
 {%- set database = app['postgresql-bin'] %}
+{%- set mariadb = app['mariadb-bin'] %}
 {%- set health = app['health'] %}
 {%- set secrets = app['secrets'].split() %}
 {#- buildout adds _profile_base_location_ and the like to a section. #}
@@ -10,7 +11,7 @@
 {%-   set ns.processes = ns.processes + [process] %}
 {%- endfor %}
 {%- set process_list = ns.processes %}
-{%- set process_path = [path, app['path'], database] | select | join(':') %}
+{%- set process_path = [path, app['path'], database, mariadb] | select | join(':') %}
 {#- The app writes next to its code: it runs from a copy, with its volumes. #}
 {%- set copy = app['copy'] == 'true' %}
 {%- set run_directory = '${workdir:location}' if copy else app_directory %}
@@ -24,6 +25,9 @@
 parts =
 {%- if database %}
   postgresql
+{%- endif %}
+{%- if mariadb %}
+  mariadb
 {%- endif %}
 {%- for process in process_list %}
   process-{{ process }}
@@ -166,6 +170,65 @@ ipv4 = ${slap-configuration:ipv4-random}
 ipv6 =
 port = 5432
 {%- endif %}
+{%- if mariadb %}
+
+
+[mariadb-password]
+recipe = slapos.cookbook:generate.password
+
+# The server runs this at every start, before it answers. The app's user reaches
+# its own database only; the partition's system user administers through the socket.
+[mariadb-init]
+recipe = slapos.recipe.template
+output = ${directory:etc}/mariadb-init.sql
+mode = 0600
+inline =
+  CREATE DATABASE IF NOT EXISTS `{{ name }}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  CREATE OR REPLACE USER '{{ name }}'@'%' IDENTIFIED BY '${mariadb-password:passwd}';
+  GRANT ALL PRIVILEGES ON `{{ name }}`.* TO '{{ name }}'@'%';
+
+[mariadb-cnf]
+recipe = slapos.recipe.template
+output = ${directory:etc}/mariadb.cnf
+host = ${slap-configuration:ipv4-random}
+port = 3306
+socket = ${directory:run}/mariadb.sock
+inline =
+  [mysqld]
+  datadir = ${directory:srv}/mariadb
+  bind-address = ${:host}
+  port = ${:port}
+  socket = ${:socket}
+  pid-file = ${directory:run}/mariadb.pid
+  log-error = ${directory:log}/mariadb.log
+  tmpdir = ${directory:tmp}
+  init-file = ${mariadb-init:output}
+  skip-name-resolve
+
+# Installed beside the data directory and moved in, so that a stop during the
+# install doesn't leave one that looks complete.
+[mariadb-script]
+recipe = slapos.recipe.template
+output = ${directory:process}/mariadb
+inline =
+  set -e
+  data=${directory:srv}/mariadb
+  if [ ! -d "$data" ]; then
+    rm -rf "$data.new"
+    {{ mariadb }}/../scripts/mariadb-install-db --no-defaults --basedir={{ mariadb }}/.. --datadir="$data.new" --skip-test-db --auth-root-authentication-method=socket --auth-root-socket-user="$(id -un)" >/dev/null
+    mv "$data.new" "$data"
+  fi
+  exec {{ mariadb }}/mariadbd --defaults-file=${mariadb-cnf:output}
+
+[mariadb]
+<= process-base
+command-line = {{ dash }} ${mariadb-script:output}
+wrapper-path = ${directory:service}/mariadb
+hash-files =
+  ${mariadb-script:output}
+  ${mariadb-cnf:output}
+  ${mariadb-init:output}
+{%- endif %}
 {%- for secret in secrets %}
 {%-   set name, kind = (secret ~ ':').split(':')[:2] %}
 
@@ -262,6 +325,14 @@ environment =
   PGDATABASE=${postgresql:dbname}
   PGSSLMODE=disable
 {%- endif %}
+{%- if mariadb %}
+  DATABASE_URL=mysql://{{ name }}:${mariadb-password:passwd}@${mariadb-cnf:host}:${mariadb-cnf:port}/{{ name }}
+  MYSQL_HOST=${mariadb-cnf:host}
+  MYSQL_PORT=${mariadb-cnf:port}
+  MYSQL_USER={{ name }}
+  MYSQL_PASSWORD=${mariadb-password:passwd}
+  MYSQL_DATABASE={{ name }}
+{%- endif %}
 {%- if app['fonts'] %}
   FONTCONFIG_FILE=${fontconfig-conf:output}
 {%- endif %}
@@ -287,6 +358,9 @@ inline =
   . ${parameters-environment:output}
 {%-   if database %}
   until pg_isready -q -h ${postgresql:ipv4} -p ${postgresql:port}; do sleep 2; done
+{%-   endif %}
+{%-   if mariadb %}
+  until mariadb-admin --no-defaults --skip-ssl --host=localhost --socket=${mariadb-cnf:socket} --silent ping 2>/dev/null; do sleep 2; done
 {%-   endif %}
   cd {{ run_directory }}
 {%-   if is_release %}
