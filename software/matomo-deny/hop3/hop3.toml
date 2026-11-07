@@ -1,0 +1,97 @@
+# Hop3 Configuration for Matomo (Native build)
+# Web analytics platform
+
+[metadata]
+id = "matomo-deny"
+version = "5.14.2"
+title = "Matomo"
+description = "Open source web analytics platform"
+homepage = "https://matomo.org/"
+license = "GPL-3.0"
+author = "Matomo Analytics"
+categories = ["analytics", "web-analytics", "privacy"]
+
+[build]
+# Force local builder for native PHP deployment
+builder = "local"
+toolchain = "php"
+
+before-build = "bash scripts/download.sh"
+# Matomo doesn't require composer for basic install
+
+[run]
+before-run = "bash scripts/setup-config.sh"
+
+[[addons]]
+type = "mysql"
+
+[env]
+# ADR-046 stable secret: Matomo's salt keys its hashing, so a value regenerated
+# per deploy invalidates sessions and breaks stored values. Generated once and
+# re-injected unchanged. (The previous recipe minted a fresh one every deploy.)
+MATOMO_SALT = { generate = "urlsafe" }
+
+# Initial admin account (ADR 056). Matomo's superuser signs in by LOGIN NAME;
+# the email is stored on the account and used for its notifications. Matomo 5
+# ships no console command for installing or creating a superuser — its
+# Installation plugin is a browser wizard — so scripts/install.php drives the
+# same APIs that wizard calls, and verifies the result.
+# Hop3's OWN account for verifying the app keeps working — a plain user, never
+# a superuser. Its password is Hop3's to rotate, so a refused sign-in means the
+# app broke, unlike the [admin] credential once the operator changes it.
+# Matomo ships no user CLI, so install.php doubles as the probe's create
+# command. Hop3 runs it and checks the exit code — a probe it cannot create
+# is one it cannot offer to the smoke test.
+[probe]
+username = "hop3probe"
+email = "probe@hop3.invalid"
+create = "php scripts/install.php --probe-only"
+
+[admin]
+username = "admin"
+email = "operator"
+password = { generate = "password", length = 20 }
+
+[healthcheck]
+path = "/"
+contains = "Sign in - Matomo"
+
+# Every deploy replaces src/, so each directory the app writes to is a volume.
+# settings/ holds config.ini.php, which Matomo writes (installation, plugins,
+# the admin UI); scripts/setup-config.sh links config/ to it. tmp/ holds
+# caches, compiled templates and merged assets: reset on every deploy.
+[[volumes]]
+name = "settings"
+target = "settings"
+
+[[volumes]]
+name = "tmp"
+target = "tmp"
+type = "scratch"
+
+# nginx doesn't read the .htaccess files Matomo generates for /config, /core, /lang and
+# /tmp. settings/ holds the database password, and its file starts with `<?php exit; ?>`,
+# so php-fpm would print nothing; refuse the path anyway. The rest comes from the recipe
+# or has no reason to be reachable. /plugins, /libs and /node_modules stay, for the
+# pages' stylesheets, scripts and images.
+[proxy]
+deny = [
+  "/CHANGELOG.md", "/CONTRIBUTING.md", "/DIObject.php", "/LEGALNOTICE", "/LICENSE", "/LegacyAutoloader.php",
+  "/PRIVACY.md", "/README.md", "/SECURITY.md", "/config", "/console", "/core", "/hop3.toml", "/lang", "/misc",
+  "/scripts", "/settings", "/tests", "/tmp", "/vendor",
+]
+
+[test]
+priority = "P1"
+tier = "medium"
+author = "hop3-team"
+targets = ["docker", "remote"]
+covers = ["php", "mysql"]
+
+# "Matomo" alone also appears on the INSTALLER page, so this passed for an app
+# that had never been installed. The sign-in page's title is served only once
+# installation has completed, so assert that instead.
+[[test.validations]]
+path = "/"
+status = 200
+contains = "Sign in - Matomo"
