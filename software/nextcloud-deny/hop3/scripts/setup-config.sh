@@ -74,12 +74,17 @@ fi
 # trusted_domains, Nextcloud rejects every request through the reverse proxy
 # with "Access through untrusted domain" (HTTP 400) and the login is unreachable.
 php occ config:system:set trusted_domains 0 --value="localhost"
+i=1
 if [ -n "${HOST_NAME:-}" ] && [ "${HOST_NAME}" != "_" ]; then
-    i=1
     for host in ${HOST_NAME//,/ }; do
         php occ config:system:set trusted_domains "$i" --value="$host"
         i=$((i + 1))
     done
+fi
+# On SlapOS, the node's health promise asks the backend by its own address.
+if [ -n "${HOP3_BACKEND_URL:-}" ]; then
+    backend=${HOP3_BACKEND_URL#*://}
+    php occ config:system:set trusted_domains "$i" --value="${backend%%/*}"
 fi
 
 # Tell Nextcloud it sits behind Hop3's TLS-terminating reverse proxy.
